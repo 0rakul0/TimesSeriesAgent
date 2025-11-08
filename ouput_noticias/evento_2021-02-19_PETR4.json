@@ -1,0 +1,15 @@
+{
+    "data": "19 de fevereiro de 2021",
+    "data_formatada": "19 de fevereiro de 2021",
+    "origem_evento": "PETR4",
+    "preco_petr4": 8.096334457397461,
+    "preco_brent": 62.90999984741211,
+    "variacao_petr4": -6.627981727305277,
+    "variacao_brent": -1.5954957811584625,
+    "analise": "---\n\nSentimento: NEGATIVO\nImpacto estimado: -3%\nPreço projetado: R$7.54\nJustificativa: As notícias apresentam uma queda nas ações da Petrobras, com as preferenciais caindo mais de 6% e as ordinárias 7,50%. Isso indica um sentimento negativo e um impacto estimado de cerca de 3% no preço do ativo.\n\n---\n\n**Observação:** A perda percentual do impacto não foi calculada diretamente do texto, mas sim com base na análise geral das notícias.",
+    "noticias": "Título: PETR4 - Petrobrás - Resultados, Dividendos, Cotação e Indicadores\nLink: https://investidor10.com.br/acoes/petr4/\nResumo: A Ibovespa disparou 2% após notícias sobre expectativa de corte de juros do Fed. O dólar recuou a R$ 5,42 com essa sinalização. A Petrobras (PETR4) apresenta um desempenho positivo, com uma cotação atualizada a R$ 30,47 e um P/L de 5,08, representando um desvio de 408% em relação ao seu P/L médio histórico.\n\nTítulo: PETR4 - PETROBRAS PN: cotação e indicadores - Status Invest\nLink: https://statusinvest.com.br/acoes/petr4\nResumo: Aqui está um resumo em até 100 tokens:\n\nA Petrobras detém 7.889.444.211 ações. O total de papel é: ON (46,74%) e PN (80,99%). A empresa atua principalmente no setor de petróleo, gás e biocombustíveis, com destaque para exploração, refino e distribuição.\n\nTítulo: Bovespa é puxada por forte queda da Petrobras após pressão de ...\nLink: https://g1.globo.com/economia/noticia/2021/02/19/bovespa.ghtml\nResumo: Aqui está uma resumo do trecho de notícia:\n\nA Petrobras enfrenta uma queda nas ações. As ações preferenciais cederam mais de 6% e as ordinárias 7,50%. A bolsa brasileira fechou em baixa de 0,96% na quinta-feira.",
+    "contexto": "O mercado financeiro estava sob pressão após notícias sobre expectativa de corte de juros do Fed e a Petrobras enfrentava uma queda nas ações",
+    "acontecimento": "A Petrobras apresentou um desempenho positivo, com uma cotação atualizada a R$ 30,47 e um P/L de 5,08, representando um desvio de 408% em relação ao seu P/L médio histórico. As ações preferenciais cederam mais de 6% e as ordinárias 7,50%.",
+    "impacto": "A queda nas ações da Petrobras puxou a bolsa brasileira para uma baixa de 0,96% na quinta-feira. A empresa enfrenta pressão após notícias sobre expectativa de corte de juros do Fed e o dólar recuou a R$ 5,42 com essa sinalização.",
+    "fontes": "<investidor10.com.br e statusinvest.com.br e g1.globo.com>"
+}

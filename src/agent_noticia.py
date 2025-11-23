@@ -1,256 +1,334 @@
 import os
-import pandas as pd
+import re
 import json
-from babel.dates import format_date
+import pandas as pd
 from datetime import datetime
-from pydantic import BaseModel, Field
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate
-from tavily import TavilyClient
+import numpy as np
+from typing import List
 from dotenv import load_dotenv
-import os
+from pydantic import BaseModel, Field
 
-# Carrega variáveis do .env
+from openai import OpenAI
+from tavily import TavilyClient
+
 load_dotenv()
 
+CAMINHO_SAIDA = "../output_noticias"
+LIMIAR_VARIACAO = 2.0
 
-LIMIAR_VARIACAO = 5.0  # % limite para disparar busca de notícias
-CAMINHO_DADOS = "../data/dados_combinados.csv"
-CAMINHO_SAIDA_EVENTOS = "../ouput_noticias"
+os.makedirs(CAMINHO_SAIDA, exist_ok=True)
 
-
-class ResumoNoticias(BaseModel):
-    data: str = Field(..., description="Data do evento analisado")
-    contexto: str = Field(..., description="Contexto político e econômico do evento")
-    acontecimento: str = Field(..., description="O que ocorreu com a Petrobras")
-    impacto: str = Field(..., description="Impacto sobre a empresa e o mercado")
-    fontes: str = Field(..., description="Principais fontes de informação (se houver)")
+client = OpenAI()
+tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 
-# ======================================
-# 1️⃣ Configuração do cliente tavily e LLM
-# ======================================
-# Lê a chave da Tavily
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+# ============================================================
+# MAPA PARA NOME DE EMPRESA
+# ============================================================
+EMPRESAS = {
+    "PETR4.SA": "Petrobras",
+    "PRIO3.SA": "PetroRio",
+    "VALE3.SA": "Vale",
+    "BZ=F": "petróleo Brent"
+}
 
-tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
-llm = ChatOllama(model="llama3.2", base_url="http://localhost:11434")
+
+# ============================================================
+# MODELO JSON
+# ============================================================
+class EventoNoticia(BaseModel):
+    data: str
+    ativo: str
+    retorno_no_dia: float
+    fechamento: float
+    sentimento_do_mercado: str = Field(default="neutro")
+    o_que_houve: str = ""
+    motivos_identificados: List[str] = Field(default_factory=list)
+    fontes: List[str] = Field(default_factory=list)
 
 
-def resumir_trecho(trecho: str, max_tokens: int = 100):
-    prompt = ChatPromptTemplate.from_template("""
-    Resuma o seguinte trecho de notícia em até {max_tokens} tokens, mantendo os pontos principais:
-    {input}
-    """)
-    chain = prompt | llm
-    response = chain.invoke({"input": trecho, "max_tokens": max_tokens})
-    return response.content
+# ============================================================
+# FUNÇÕES AUXILIARES
+# ============================================================
+def _safe_extract_json(texto: str) -> dict:
+    """Extrai JSON mesmo se o modelo devolver texto extra."""
+    try:
+        return json.loads(texto)
+    except Exception:
+        pass
 
-# ======================================
-# 🕵️ 1️⃣ Agente Coletor (usando Tavily)
-# ======================================
-def coletar_noticias(ativo, data_evento: str):
-    """
-    Coleta e resume notícias relevantes para o ativo (PETR4 ou Brent) na data especificada.
-    """
-    if ativo == "PETR4":
-        procura = "Petrobras PETR4"
-    else:
-        procura = "preço do petróleo Brent"
+    # Tenta achar objetos JSON no meio do texto
+    m = re.search(r"\{.*\}", texto, flags=re.DOTALL)
+    if m:
+        return json.loads(m.group(0))
 
-    query = f"notícias sobre {procura} em {data_evento}"
-    print(f"🗞️ Buscando notícias: {query}")
+    raise ValueError("O modelo não retornou JSON válido.")
 
-    resp = tavily_client.search(
+
+def _sem_evento_relevante(txt: str) -> bool:
+    if not txt:
+        return True
+    txt = txt.lower()
+    padroes = [
+        "sem evento",
+        "não houve",
+        "nenhuma notícia",
+        "movimento geral",
+        "macro",
+        "não há registro",
+        "fatores macroeconômicos"
+    ]
+    return any(p in txt for p in padroes)
+
+
+# ============================================================
+# BUSCA TAVILY
+# ============================================================
+def coletar_noticias_tavily(ativo: str, data_iso: str):
+    empresa = EMPRESAS.get(ativo, ativo)
+
+    query = f"notícias {empresa} {ativo} {data_iso} petróleo brent"
+
+    resp = tavily.search(
         query=query,
-        start_date=data_evento,
+        include_raw_content=True,
         search_depth="advanced",
-        max_results=3,
-        include_answer=True,
+        max_results=4
     )
 
-    if not resp.get("results"):
-        return "Nenhuma notícia encontrada."
+    textos = []
+    fontes = []
 
-    noticias = []
-    for doc in resp["results"]:
-        titulo = doc.get("title", "Sem título")
-        url = doc.get("url", "")
-        trecho = doc.get("content", "")
+    for r in resp.get("results", []):
+        if r.get("content"):
+            textos.append(f"{r['title']}\n{r['content']}")
+            fontes.append(r.get("url", ""))
 
-        # ✅ Resumo automático do trecho
-        resumo_trecho = resumir_trecho(trecho)
+    return "\n\n".join(textos), fontes
 
-        noticias.append({
-            "titulo": titulo,
-            "url": url,
-            "resumo": resumo_trecho
-        })
 
-    # Retorna formato limpo e compacto
-    return "\n\n".join(
-        f"Título: {n['titulo']}\nLink: {n['url']}\nResumo: {n['resumo']}"
-        for n in noticias
+# ============================================================
+# GPT PURO
+# ============================================================
+def consultar_chatgpt_evento(ativo: str, data_iso: str, retorno: float, fechamento: float):
+
+    prompt = f"""
+Explique o que ocorreu com o ativo {ativo} no dia {data_iso}.
+Use apenas fatos reais. Se não houver evento, diga claramente.
+
+Retorne SOMENTE JSON:
+
+{{
+  "data": "{data_iso}",
+  "ativo": "{ativo}",
+  "retorno_no_dia": {retorno},
+  "fechamento": {fechamento},
+  "sentimento_do_mercado": "<positivo|negativo|neutro>",
+  "o_que_houve": "<máximo 3 frases>",
+  "motivos_identificados": ["<mot1>", "<mot2>"],
+  "fontes": ["Valor Econômico", "Reuters"]
+}}
+"""
+
+    resp = client.chat.completions.create(
+        model="gpt-4.1",
+        response_format={"type": "json_object"},   # MODELO ACEITA
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
     )
 
-# ======================================
-# 😊 2️⃣ Agente Analisador de Sentimentos
-# ======================================
-def analisar_sentimento(texto: str, preco_atual: float, data: str):
-    prompt_template = ChatPromptTemplate.from_messages([
-        ("system", f"""
-        Você é um analista financeiro especializado no mercado de ações brasileiro.
-        Analise as notícias sobre a Petrobras (PETR4) publicadas em {data} e:
-        1️⃣ Classifique o sentimento geral (POSITIVO, NEGATIVO ou NEUTRO)
-        2️⃣ Estime o impacto percentual no preço do ativo
-        3️⃣ Projete o preço futuro considerando o preço atual de R${preco_atual:.2f}
-        4️⃣ Justifique brevemente o raciocínio.
-        Formato:
-        ---
-        Sentimento: <positivo|negativo|neutro>
-        Impacto estimado: <percentual>
-        Preço projetado: R$<valor>
-        Justificativa: <texto curto>
-        ---
-        """),
-        ("user", "{input}")
-    ])
-    chain = prompt_template | llm
-    response = chain.invoke({"input": texto})
-    return response.content
+    # ATENÇÃO: modelo retorna conteúdo JSON em .content
+    dados = json.loads(resp.choices[0].message.content)
+
+    # Blindagem
+    dados["retorno_no_dia"] = retorno
+    dados["fechamento"] = fechamento
+    dados["ativo"] = ativo
+    dados["data"] = data_iso
+
+    return EventoNoticia(**dados)
 
 
-# ======================================
-# 🧾 3️⃣ Agente Resumidor
-# ======================================
-def resumir_noticias(texto: str, data: str):
-    prompt = ChatPromptTemplate.from_template("""
-    Você é um jornalista econômico especializado em mercado financeiro brasileiro.
-    Resuma as notícias sobre a Petrobras (PETR4) em {data} no formato JSON:
-    {{
-        "data": "{data}",
-        "contexto": "<descrição do contexto político e econômico>",
-        "acontecimento": "<o que aconteceu>",
-        "impacto": "<impacto sobre a empresa e o mercado>",
-        "fontes": "<principais fontes citadas>"
-    }}
-    Notícias:
-    {input}
-    """)
-    chain = prompt | llm.with_structured_output(ResumoNoticias)
-    response = chain.invoke({"input": texto, "data": data})
-    return response
 
-def detectar_eventos(caminho_csv: str = CAMINHO_DADOS, limiar: float = LIMIAR_VARIACAO):
-    df = pd.read_csv(caminho_csv, index_col=0, parse_dates=True)
-    df.index = pd.to_datetime(df.index).normalize()
+# ============================================================
+# HÍBRIDO GPT + TAVILY
+# ============================================================
+def consultar_evento_hibrido(ativo, data_iso, retorno, fechamento):
 
-    col_petr = "Close_PETR4.SA"
-    col_brent = "Close_BZ=F"
+    # 1) GPT puro primeiro
+    evento = consultar_chatgpt_evento(ativo, data_iso, retorno, fechamento)
 
-    # ✅ Calcula variações percentuais
-    df["Ret_PETR4"] = df[col_petr].pct_change() * 100
-    df["Ret_BZ"] = df[col_brent].pct_change() * 100
+    # Se GPT escreveu algo minimamente útil → aceitar
+    if evento.o_que_houve and len(evento.o_que_houve.strip()) > 10:
+        return evento
 
-    # 🔍 Detecta eventos relevantes
-    eventos_petr = df[abs(df["Ret_PETR4"]) > limiar].copy()
-    eventos_petr["origem_evento"] = "PETR4"
+    print("🟡 GPT não encontrou um evento claro — usando Tavily...")
 
-    eventos_brent = df[abs(df["Ret_BZ"]) > limiar].copy()
-    eventos_brent["origem_evento"] = "Brent"
+    # 2) Fallback Tavily
+    texto, fontes = coletar_noticias_tavily(ativo, data_iso)
+    if not texto:
+        print("🔴 Tavily não encontrou nada — utilizando resposta do GPT.")
+        return evento
 
-    # Junta e trata duplicatas (eventos simultâneos)
-    eventos = pd.concat([eventos_petr, eventos_brent]).sort_index()
+    # 3) GPT com notícias reais
+    empresa = EMPRESAS.get(ativo, ativo)
 
-    # Se no mesmo dia ocorrer evento em ambos, marca como “Ambos”
-    eventos = (
-        eventos.groupby(eventos.index)
-        .agg({
-            col_petr: "first",
-            col_brent: "first",
-            "Ret_PETR4": "first",
-            "Ret_BZ": "first",
-            "origem_evento": lambda x: "Ambos" if len(set(x)) > 1 else list(x)[0],
-        })
+    prompt = f"""
+Explique o que ocorreu com o ativo {ativo} ({empresa}) no dia {data_iso}
+usando EXCLUSIVAMENTE as notícias abaixo.
+
+Retorne SOMENTE JSON.
+
+NOTÍCIAS:
+{texto}
+"""
+
+    resp = client.chat.completions.create(
+        model="gpt-4.1",
+        response_format={"type": "json_object"},
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
     )
 
-    if eventos.empty:
-        print("✅ Nenhum evento relevante encontrado.")
-        return
+    dados = json.loads(resp.choices[0].message.content)
+    dados["retorno_no_dia"] = retorno
+    dados["fechamento"] = fechamento
+    dados["ativo"] = ativo
+    dados["data"] = data_iso
 
-    registros = []
-    os.makedirs(CAMINHO_SAIDA_EVENTOS, exist_ok=True)
+    return EventoNoticia(**dados)
 
-    for data_evento, linha in eventos.iterrows():
-        preco_petr = linha[col_petr]
-        preco_brent = linha[col_brent]
-        ret_petr = linha["Ret_PETR4"]
-        ret_brent = linha["Ret_BZ"]
-        origem = linha["origem_evento"]
 
-        # 🗓️ Formata a data no estilo "22 de fevereiro de 2021"
-        data_formatada = format_date(data_evento, format="d 'de' MMMM 'de' y", locale='pt_BR')
 
-        print(f"\n🚨 Evento detectado em {data_formatada} ({origem}):")
-        print(f"   • PETR4: variação de {ret_petr:.2f}% (preço: R${preco_petr:.2f})")
-        print(f"   • Brent: variação de {ret_brent:.2f}% (preço: US${preco_brent:.2f})")
+# ============================================================
+# Z-SCORE
+# ============================================================
+def calcular_zscore(retorno, std):
+    if std is None or std <= 0 or np.isnan(std):
+        return 0.0
+    return float(retorno / std)
 
-        # 1️⃣ Coleta de notícias
-        if origem == "PETR4":
-            noticias = coletar_noticias("PETR4", data_evento.strftime("%Y-%m-%d"))
-        elif origem == "Brent":
-            noticias = coletar_noticias("Brent", data_evento.strftime("%Y-%m-%d"))
-        else:  # origem == "Ambos"
-            noticias_petr = coletar_noticias("PETR4", data_evento.strftime("%Y-%m-%d"))
-            noticias_brent = coletar_noticias("Brent", data_evento.strftime("%Y-%m-%d"))
-            noticias = {
-                "Petrobras": noticias_petr,
-                "Brent": noticias_brent
+
+def nome_arquivo_evento(ticker: str, data_iso: str):
+    ticker_limpo = ticker.replace(".SA", "").replace("=F", "")
+    return f"evento_{ticker_limpo}_{data_iso}.json"
+
+
+# ============================================================
+# DETECTAR EVENTOS
+# ============================================================
+def detectar_eventos(ticker, CAMINHO_DADOS):
+
+    print(f"\n🚀 Rodando eventos para {ticker}...")
+
+    df = pd.read_csv(CAMINHO_DADOS)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df.set_index("Date", inplace=True)
+
+    df[f"Ret_{ticker}"] = df[f"Close_{ticker}"].pct_change(fill_method=None) * 100
+    df["Ret_BZ"] = df["Close_BZ=F"].pct_change(fill_method=None) * 100
+
+    std_a = df[f"Ret_{ticker}"].expanding().std()
+    std_b = df["Ret_BZ"].expanding().std()
+
+    eventos_a = df[df[f"Ret_{ticker}"].abs() > LIMIAR_VARIACAO]
+    eventos_b = df[df["Ret_BZ"].abs() > LIMIAR_VARIACAO]
+
+    datas = sorted(set(eventos_a.index) | set(eventos_b.index))
+
+    for data_evt in datas:
+
+        row = df.loc[data_evt]
+        data_iso = data_evt.strftime("%Y-%m-%d")
+
+        if data_evt in eventos_a.index and data_evt in eventos_b.index:
+            ativo = "AMBOS"
+        elif data_evt in eventos_a.index:
+            ativo = ticker
+        else:
+            ativo = "BRENT"
+
+        nome = nome_arquivo_evento(ativo, data_iso)
+        out = os.path.join(CAMINHO_SAIDA, nome)
+
+        if os.path.exists(out):
+            continue
+
+        print(f"\n📅 {data_iso} | Ativo detectado: {ativo}")
+
+        if ativo == "AMBOS":
+
+            evento_a = consultar_evento_hibrido(ticker, data_iso, row[f"Ret_{ticker}"], row[f"Close_{ticker}"])
+            evento_b = consultar_evento_hibrido("BZ=F", data_iso, row["Ret_BZ"], row["Close_BZ=F"])
+
+            registro = {
+                "data": data_iso,
+                "ativo": "AMBOS",
+                "retorno_no_dia": {
+                    ticker: row[f"Ret_{ticker}"],
+                    "BRENT": row["Ret_BZ"]
+                },
+                "fechamento": {
+                    ticker: row[f"Close_{ticker}"],
+                    "BRENT": row["Close_BZ=F"]
+                },
+                "motivos_identificados": list(
+                    dict.fromkeys(evento_a.motivos_identificados + evento_b.motivos_identificados)),
+                "fontes": list(dict.fromkeys(evento_a.fontes + evento_b.fontes)),
+                f"impacto_d0_{ticker}": row[f"Ret_{ticker}"],
+                "impacto_d0_BRENT": row["Ret_BZ"],
+                f"zscore_{ticker}": calcular_zscore(row[f"Ret_{ticker}"], std_a.loc[data_evt]),
+                "zscore_brent": calcular_zscore(row["Ret_BZ"], std_b.loc[data_evt]),
+                "o_que_houve": f"{ticker}: {evento_a.o_que_houve}\nBRENT: {evento_b.o_que_houve}"
             }
 
-        # 2️⃣ Análise de sentimento
-        analise = analisar_sentimento(noticias, preco_petr, data_formatada)
+            # 🔥 NORMALIZAR TICKERS (REMOVER .SA)
+            def normalize(x):
+                return x.replace(".SA", "").replace("=F", "")
 
-        # 3️⃣ Resumo (pode retornar objeto BaseModel)
-        resumo = resumir_noticias(noticias, data_formatada)
-        resumo_dict = resumo.model_dump() if hasattr(resumo, "model_dump") else {"resumo": resumo}
+            # corrigir o retorno e fechamento
+            registro["retorno_no_dia"] = {normalize(k): v for k, v in registro["retorno_no_dia"].items()}
+            registro["fechamento"] = {normalize(k): v for k, v in registro["fechamento"].items()}
 
-        # 4️⃣ Registro estruturado
-        registro = {
-            "data": data_evento.strftime("%Y-%m-%d"),
-            "data_formatada": data_formatada,
-            "origem_evento": origem,
-            "preco_petr4": preco_petr,
-            "preco_brent": preco_brent,
-            "variacao_petr4": ret_petr,
-            "variacao_brent": ret_brent,
-            "analise": analise,
-            "noticias": noticias,
-            **resumo_dict
-        }
-        registros.append(registro)
+            # corrigir nomes dos impactos
+            novo_registro = {}
+            for k, v in registro.items():
+                if "impacto_d0_" in k:
+                    novo_registro["impacto_d0_" + normalize(k[12:])] = v
+                else:
+                    novo_registro[k] = v
+            registro = novo_registro
 
-        # 💾 Salva JSON parcial por rodada
-        nome_arquivo_json = os.path.join(
-            CAMINHO_SAIDA_EVENTOS,
-            f"evento_{data_evento.strftime('%Y-%m-%d')}_{origem}.json"
-        )
-        with open(nome_arquivo_json, "w", encoding="utf-8") as f:
-            json.dump(registro, f, ensure_ascii=False, indent=4)
-        print(f"💾 Evento salvo: {nome_arquivo_json}")
+        else:
+            ret = row[f"Ret_{ticker}"] if ativo == ticker else row["Ret_BZ"]
+            fech = row[f"Close_{ticker}"] if ativo == ticker else row["Close_BZ=F"]
 
-    # 💾 Salvar CSV final consolidado
-    df_eventos = pd.DataFrame(registros)
-    caminho_csv_final = os.path.join(CAMINHO_SAIDA_EVENTOS, "eventos_consolidados.csv")
-    df_eventos.to_csv(caminho_csv_final, index=False)
-    print(f"\n✅ Eventos consolidados salvos em {caminho_csv_final}")
+            evento = consultar_evento_hibrido(ativo, data_iso, ret, fech)
 
-# ======================================
-# 🚀 Função Principal
-# ======================================
-def main():
-    detectar_eventos()
+            registro = evento.model_dump()
+            registro["ativo"] = ativo.replace(".SA", "")
+
+            registro["impacto_d0"] = ret
+            registro["zscore_d0"] = calcular_zscore(
+                ret,
+                std_a.loc[data_evt] if ativo == ticker else std_b.loc[data_evt]
+            )
 
 
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(registro, f, indent=4, ensure_ascii=False)
+
+        print(f"✅ Salvo: {out}")
+
+
+# ============================================================
+# MAIN
+# ============================================================
 if __name__ == "__main__":
-    main()
+    CAMINHOS = {
+        "PETR4.SA": "../data/dados_petr4_brent.csv",
+        "PRIO3.SA": "../data/dados_prio3_brent.csv",
+    }
+
+    for ticker, caminho in CAMINHOS.items():
+        detectar_eventos(ticker, caminho)

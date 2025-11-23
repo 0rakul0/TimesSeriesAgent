@@ -1,1 +1,5 @@
 src/.env
+/ouput_noticias
+*.json
+hybrid/.env
+hybrid/.env

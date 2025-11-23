@@ -1,229 +1,154 @@
 """
-Análise de séries temporais e simulações baseadas em Monte Carlo e impacto de notícias.
+Análise de séries temporais: PRIO3 x BRENT e PETR4 x BRENT
+Decomposição, combinação e motifs/discords.
 """
+
 import os
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from collections import OrderedDict
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
-from pathlib import Path
-from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.tsa.seasonal import STL
+from correlacao_ativos import analisar_motifs_discords, plotar_series_temporais
 
-# ===============================
-# Funções principais
-# ===============================
+
+# ============================================================
+# 1) BAIXAR DADOS
+# ============================================================
 def baixar_dados_acao(ticker: str, periodo: str = "5y") -> pd.DataFrame:
-    """
-    Baixa dados históricos de uma ação usando yfinance.
-    """
+    caminho = f'../data/dados_acao_{ticker}_{periodo}.csv'
     acao = yf.Ticker(ticker)
-    if not os.path.exists(f'../data/dados_acao_{ticker}.csv'):
+
+    if not os.path.exists(caminho):
         dados = acao.history(period=periodo)
+        dados.to_csv(caminho)
     else:
-        dados = pd.read_csv(f'../data/dados_acao_{ticker}.csv', index_col=0, parse_dates=True)
-    dados.to_csv(f'../data/dados_acao_{ticker}.csv')
+        dados = pd.read_csv(caminho, index_col=0, parse_dates=True)
+
     return dados
 
 
-def decomposicao_sazonal(dados: pd.DataFrame, coluna: str = "Close", freq: int = 252):
-    """
-    Realiza a decomposição sazonal de uma série temporal usando STL (não corta bordas).
-    """
+# ============================================================
+# 2) DECOMPOSIÇÃO SAZONAL
+# ============================================================
+def decomposicao_sazonal(dados: pd.DataFrame, ticker: str, coluna="Close", freq=252):
     serie_temporal = dados[coluna]
-
-    # --- Decomposição STL ---
     stl = STL(serie_temporal, period=freq)
-    resultado = stl.fit()
+    result = stl.fit()
 
-    trend = resultado.trend
-    seasonal = resultado.seasonal
-    resid = resultado.resid
+    print(f"\n📊 Decomposição — {ticker}")
+    print(f"• Força Tendência: {np.var(result.trend)/np.var(serie_temporal):.2%}")
+    print(f"• Força Sazonal:  {np.var(result.seasonal)/np.var(serie_temporal):.2%}")
 
-    # ============================
-    # MÉTRICAS QUANTITATIVAS
-    # ============================
-    var_total = np.var(serie_temporal)
-    var_trend = np.var(trend)
-    var_seasonal = np.var(seasonal)
+    return result
 
-    forca_tendencia = var_trend / var_total
-    forca_sazonal = var_seasonal / var_total
-    amplitude_media = (seasonal.max() - seasonal.min()).mean()
 
-    impacto_dividendos = np.nan
-    dividendos = dados[dados["Dividends"] > 0]
-    if not dividendos.empty:
-        variacoes = []
-        for idx in dividendos.index:
-            try:
-                preco_antes = dados.loc[idx, coluna]
-                prox_idx = dados.index.get_loc(idx) + 5
-                if prox_idx < len(dados):
-                    preco_depois = dados.iloc[prox_idx][coluna]
-                    variacoes.append((preco_depois - preco_antes) / preco_antes * 100)
-            except Exception:
-                continue
-        if variacoes:
-            impacto_dividendos = np.mean(variacoes)
+# ============================================================
+# 3) COMBINAR BASES
+# ============================================================
+def carregar_e_preparar(caminho, ticker):
+    df = pd.read_csv(caminho, index_col=0, parse_dates=True)
 
-    print("\n📊 MÉTRICAS DE DECOMPOSIÇÃO -", ticker)
-    print(f"Força da Tendência:     {forca_tendencia:.2%}")
-    print(f"Força da Sazonalidade:  {forca_sazonal:.2%}")
-    print(f"Amplitude Média Sazonal: {amplitude_media:.2f}")
-    if not np.isnan(impacto_dividendos):
-        print(f"Impacto Médio dos Dividendos (5 dias): {impacto_dividendos:.2f}%")
-    else:
-        print("Impacto Médio dos Dividendos: não calculado (faltam dados)")
+    df.index = pd.to_datetime(df.index, utc=True).tz_convert(None)
+    df["Date"] = df.index.date  # cria coluna explícita
+    df = df.set_index("Date")   # transforma Date em índice
 
-    # ============================
-    # GRÁFICO PRINCIPAL (STL)
-    # ============================
-    fig_stl = resultado.plot()
-    plt.suptitle(f"Decomposição Sazonal - {ticker}", fontsize=14)
-    plt.tight_layout()
+    colunas = ["Open", "High", "Low", "Close", "Volume", "Dividends"]
+    renomeadas = {c: f"{c}_{ticker}" for c in colunas}
 
-    if not dividendos.empty:
-        eixos = fig_stl.axes
-        for ax in eixos:
-            for idx in dividendos.index:
-                ax.axvline(x=idx, color="purple", linestyle="--", alpha=0.7)
-        eixos[-1].legend(["Dividendo"], loc="upper left")
+    return df.rename(columns=renomeadas)[list(renomeadas.values())]
 
-    plt.savefig(f"../img/decomposicao_sazonal_{ticker}.png", bbox_inches="tight")
-    plt.show()
 
-    # ============================
-    # GRÁFICO RESUMO AUTOMÁTICO
-    # ============================
-    plt.figure(figsize=(12, 6))
-    plt.plot(dados.index, serie_temporal, label="Preço Fechamento", color="blue", linewidth=2)
-    plt.plot(dados.index, trend, label="Tendência", color="orange", linestyle="--", linewidth=2)
-    plt.plot(dados.index, seasonal + trend.mean(), label="Sazonalidade (ajustada)", color="green", linestyle=":",
-             linewidth=1.5)
+def juntar_series(caminhos_csv: dict, salvar):
+    series = []
+    for ticker, arq in caminhos_csv.items():
+        df = carregar_e_preparar(f"../data/{arq}", ticker)
+        series.append(df)
 
-    # Linhas verticais de dividendos
-    if not dividendos.empty:
-        for idx in dividendos.index:
-            plt.axvline(x=idx, color="purple", linestyle="--", alpha=0.6)
-        plt.scatter(dividendos.index, dados.loc[dividendos.index, coluna],
-                    color="purple", label="Dividendos", zorder=5)
+    dados = pd.concat(series, axis=1, join="outer").sort_index()
+    dados = dados.dropna(how="all")
 
-    plt.title(f"📈 Resumo de Decomposição - {ticker}")
-    plt.xlabel("Data")
-    plt.ylabel("Preço")
-    plt.legend(loc="upper left")
-    plt.grid(alpha=0.3)
+    # garante Date como primeira coluna no CSV
+    dados_reset = dados.copy()
+    dados_reset["Date"] = dados_reset.index
+    colunas = ["Date"] + [c for c in dados_reset.columns if c != "Date"]
+    dados_reset[colunas].to_csv(salvar, index=False)
 
-    # Painel de métricas na parte inferior
-    texto_metricas = (
-        f"Força da Tendência: {forca_tendencia:.2%}\n"
-        f"Força da Sazonalidade: {forca_sazonal:.2%}\n"
-        f"Amplitude Média Sazonal: {amplitude_media:.2f}\n"
-        f"Impacto Médio dos Dividendos (5 dias): "
-        f"{impacto_dividendos:.2f}%" if not np.isnan(impacto_dividendos)
-        else "Impacto Médio dos Dividendos: não calculado"
+    print(f"💾 Arquivo salvo em: {salvar}  — {dados.shape}")
+    return dados
+
+
+# ============================================================
+# 4) EXECUÇÃO PRINCIPAL
+# ============================================================
+if __name__ == "__main__":
+
+    tickers = ["PRIO3.SA", "PETR4.SA", "BZ=F"]
+
+    # --- Baixar e decompor somente PRIO3, PETR4 e BRENT ---
+    for ticker in tickers:
+        dados = baixar_dados_acao(ticker)
+        decomposicao_sazonal(dados, ticker)
+
+    # ======================================================
+    # 🔵 1) PRIO3 x BRENT
+    # ======================================================
+    caminhos_prio = {
+        "PRIO3.SA": "dados_acao_PRIO3.SA_5y.csv",
+        "BZ=F": "dados_acao_BZ=F_5y.csv",
+    }
+
+    dados_prio = juntar_series(caminhos_prio, salvar="../data/dados_prio3_brent.csv")
+
+    plotar_series_temporais(dados_prio, titulo="PRIO3 x BRENT", normalizar=True)
+
+    dados_prio = pd.read_csv("../data/dados_prio3_brent.csv", index_col=0, parse_dates=True)
+
+    analisar_motifs_discords(
+        dados_prio,
+        ticker="PRIO3.SA",
+        janela=60,
+        n_motifs=5,
+        limite_volume=30_000_000
     )
 
-    plt.figtext(0.02, -0.05, texto_metricas, fontsize=10, ha="left", va="top",
-                bbox=dict(facecolor="whitesmoke", edgecolor="lightgray", boxstyle="round,pad=0.5"))
-
-    plt.tight_layout()
-    plt.savefig(f"../img/resumo_decomposicao_{ticker}.png", bbox_inches="tight")
-    plt.show()
-
-    return resultado
-
+    analisar_motifs_discords(
+        dados_prio,
+        ticker="BZ=F",
+        janela=60,
+        n_motifs=5,
+        limite_volume=50_000
+    )
 
 
-def gerar_noticias_sinteticas(caminho_csv: str, datas_referencia: pd.Series):
-    """
-    Gera um CSV sintético de notícias com base nas datas do dataset do yfinance.
-    Cada dia pode ter entre 1 e 4 notícias.
-    """
-    np.random.seed(42)  # Reprodutibilidade
+    # ======================================================
+    # 🔵 2) PETR4 x BRENT
+    # ======================================================
+    caminhos_petr = {
+        "PETR4.SA": "dados_acao_PETR4.SA_5y.csv",
+        "BZ=F": "dados_acao_BZ=F_5y.csv",
+    }
 
-    registros = []
-    for data in datas_referencia:
-        num_noticias = np.random.randint(1, 5)
-        for _ in range(num_noticias):
-            polaridade = np.random.choice([-1, 0, 1], p=[0.2, 0.2, 0.6])
-            peso_impacto = np.round(np.random.uniform(0.1, 1.0), 2)
-            categoria = np.random.choice(["Econômica", "Financeira", "Política", "Setorial", "Mercado"])
-            fonte = np.random.choice(["Reuters", "Valor Econômico", "Estadão", "Bloomberg", "CNN Brasil"])
-            titulo = f"Notícia {np.random.randint(1000,9999)}"
-            registros.append({
-                "data": data,
-                "titulo": titulo,
-                "polaridade": polaridade,
-                "peso_impacto": peso_impacto,
-                "categoria": categoria,
-                "fonte": fonte
-            })
+    dados_petr = juntar_series(caminhos_petr, salvar="../data/dados_petr4_brent.csv")
 
-    df = pd.DataFrame(registros)
-    Path(caminho_csv).parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(caminho_csv, index=False)
-    print(f"[INFO] CSV sintético criado em: {caminho_csv} ({len(df)} notícias geradas)")
-    return df
+    plotar_series_temporais(dados_petr, titulo="PETR4 x BRENT", normalizar=True)
 
-def carregar_noticias_sinteticas(datas_referencia: pd.Series):
-    """
-    Carrega o CSV de notícias sintéticas ou o cria, caso não exista.
-    """
-    caminho_csv = Path("../util/noticias_sinteticas.csv")
+    dados_petr = pd.read_csv("../data/dados_petr4_brent.csv", index_col=0, parse_dates=True)
 
-    if not caminho_csv.exists():
-        print("[INFO] Arquivo de notícias não encontrado. Gerando novo...")
-        return gerar_noticias_sinteticas(caminho_csv, datas_referencia)
+    analisar_motifs_discords(
+        dados_petr,
+        ticker="PETR4.SA",
+        janela=60,
+        n_motifs=5,
+        limite_volume=50_000_000
+    )
 
-    print("[INFO] Lendo notícias existentes de:", caminho_csv)
-    noticias = pd.read_csv(caminho_csv, parse_dates=["data"])
-    return noticias
-
-
-def simulacao_baseada_em_noticias(dados: pd.DataFrame, noticias: pd.DataFrame,
-                                  coluna: str = "Close", dias: int = 30, peso_volatilidade: float = 0.3):
-    """
-    Simula o preço futuro de uma ação ponderando o impacto de notícias positivas ou negativas.
-    """
-    retornos = np.log(1 + dados[coluna].pct_change().dropna())
-    media_hist = retornos.mean()
-    desvio_hist = retornos.std()
-    preco_atual = dados[coluna].iloc[-1]
-    precos = [preco_atual]
-
-    for dia in range(dias):
-        if dia < len(noticias):
-            polaridade = noticias.iloc[dia]['polaridade']
-            impacto = noticias.iloc[dia]['peso_impacto']
-        else:
-            polaridade, impacto = 0, 0
-
-        choque_noticia = polaridade * impacto * desvio_hist * 2
-        choque_aleatorio = np.random.normal(media_hist, desvio_hist) * peso_volatilidade
-        variacao = choque_noticia + choque_aleatorio
-        novo_preco = precos[-1] * np.exp(variacao)
-        precos.append(novo_preco)
-
-    return pd.Series(precos, name="Simulação")
-
-# ===============================
-# Execução principal revisada
-# ===============================
-if __name__ == "__main__":
-    if __name__ == "__main__":
-        tickers = ["PETR4.SA", "BZ=F", "USDBRL=X"]
-
-        # --- Baixar dados da ação (2 anos por padrão) ---
-        for ticker in tickers:
-            dados_acao = baixar_dados_acao(ticker, periodo="5y")
-            decomposicao_sazonal(dados_acao)
-
-            # noticias = carregar_noticias_sinteticas(dados_acao.index)
-
-            # sim = simulacao_baseada_em_noticias(dados_acao, noticias)
-            # print("✅ Simulação baseada em notícias concluída.")
+    analisar_motifs_discords(
+        dados_petr,
+        ticker="BZ=F",
+        janela=60,
+        n_motifs=5,
+        limite_volume=50_000
+    )

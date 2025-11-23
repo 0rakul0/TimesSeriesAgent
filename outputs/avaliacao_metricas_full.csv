@@ -1,0 +1,11 @@
+modelo,arch,rmse_tecnico,rmse_hibrido
+GRU_normal,gru_normal,0.5803848111713892,
+GRU_residual,gru_residual,22.94597338938679,
+LSTM_normal,lstm_normal,0.7152032697168801,
+LSTM_residual,lstm_residual,22.915150558266024,
+MLP_normal,mlp_normal,0.7747361199827135,
+MLP_residual,mlp_residual,23.340040918472383,
+Transformer_normal,transformer_normal,0.986928412317569,0.9790753606827192
+Transformer_residual,transformer_residual,24.12527347066938,24.132916325660247
+lstm_baseline_price,,0.6323851610965112,0.6058877991476477
+lstm_noticia_embeddings,,16.565875561821148,

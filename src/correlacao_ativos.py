@@ -220,9 +220,9 @@ def juntar_e_correlacionar_lado_a_lado(caminhos_csv):
 
 
 caminhos = {
-    "PETR4.SA": "dados_acao_PETR4.SA.csv",
-    "BZ=F": "dados_acao_BZ=F.csv",
-    "USDBRL=X": "dados_acao_USDBRL=X.csv"
+    "PETR4.SA": "dados_acao_PETR4.SA_5y.csv",
+    "BZ=F": "dados_acao_BZ=F_5y.csv",
+    "USDBRL=X": "dados_acao_USDBRL=X_5y.csv"
 }
 
 dados, corr = juntar_e_correlacionar_lado_a_lado(caminhos)

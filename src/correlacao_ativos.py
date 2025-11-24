@@ -134,16 +134,25 @@ def analisar_motifs_discords(dados, ticker, janela, n_motifs, limite_volume):
     print(f"✅ Gráficos (PNG e HTML) salvos para {ticker} com marcação de dividendos")
     return df, motif_indices, discord_idx, picos_volume
 
-def plotar_series_temporais(dados, titulo="Séries Temporais - Ativos", normalizar=True):
+
+def plotar_series_temporais(dados, ticker="GERAL",
+                              titulo="Séries Temporais - Ativos",
+                              normalizar=True):
     """
-    Plota séries temporais e salva tanto PNG quanto HTML interativo.
+    Plota séries temporais e salva PNG e HTML com nomes dependentes do ticker.
     """
     if normalizar:
         dados_plot = dados / dados.iloc[0] * 100
         ylabel = "Índice Normalizado (base 100)"
+        sufixo = "series_temporais_normalizadas"
     else:
         dados_plot = dados
         ylabel = "Preço de Fechamento"
+        sufixo = "series_temporais_bruto"
+
+    # Nome final dos arquivos
+    arq_png = f"../img/{ticker}_{sufixo}.png"
+    arq_html = f"../img/{ticker}_{sufixo}.html"
 
     # --- Matplotlib (estático) ---
     plt.figure(figsize=(12, 6))
@@ -155,96 +164,145 @@ def plotar_series_temporais(dados, titulo="Séries Temporais - Ativos", normaliz
     plt.legend()
     plt.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig("../img/series_temporais_normalizadas.png", bbox_inches="tight")
+    plt.savefig(arq_png, bbox_inches="tight")
     plt.close()
 
     # --- Plotly (interativo) ---
     fig_plotly = go.Figure()
     for coluna in dados_plot.columns:
-        fig_plotly.add_trace(go.Scatter(x=dados_plot.index, y=dados_plot[coluna],
-                                        mode="lines", name=coluna))
+        fig_plotly.add_trace(go.Scatter(
+            x=dados_plot.index,
+            y=dados_plot[coluna],
+            mode="lines",
+            name=coluna,
+        ))
     fig_plotly.update_layout(
         title=titulo,
         xaxis_title="Data",
         yaxis_title=ylabel,
         template="plotly_white"
     )
-    fig_plotly.write_html("../img/series_temporais_normalizadas.html")
+    fig_plotly.write_html(arq_html)
 
-    print("✅ Gráficos de séries temporais salvos: PNG e HTML interativo")
+    print(f"✅ Arquivos salvos:")
+    print("   ├─", arq_png)
+    print("   └─", arq_html)
 
-def juntar_e_correlacionar_lado_a_lado(caminhos_csv):
+
+
+
+def juntar_e_correlacionar_lado_a_lado(caminhos_csv, salvar="../data/dados_combinados.csv"):
     """
-    Junta séries temporais pelo índice 'Date', mantendo todas as datas.
-    Cada CSV deve conter uma coluna 'Close'.
-    caminhos_csv: dict -> {ticker: caminho_csv}
+    Junta séries temporais padronizadas e salva no mesmo formato de `juntar_series`.
+    - Mantém Date como primeira coluna
+    - Salva sem índice (index=False)
+    - Renomeia colunas por ticker
     """
     series = []
 
     for ticker, caminho in caminhos_csv.items():
         df = pd.read_csv(f"../data/{caminho}", parse_dates=True, index_col=0)
 
+        # Padroniza índice
         df.index = pd.to_datetime(df.index, utc=True)
         df.index = df.index.tz_convert(None).date
 
+        # Colunas obrigatórias
         colunas_esperadas = ["Open", "High", "Low", "Close", "Volume", "Dividends"]
         faltando = [c for c in colunas_esperadas if c not in df.columns]
         if faltando:
             raise ValueError(f"❌ Colunas faltando em {ticker}: {faltando}")
 
-        # 🔹 Renomeia as colunas no formato {coluna}_{ticker}
+        # Renomear colunas com sufixo do ticker
         renomeadas = {col: f"{col}_{ticker}" for col in colunas_esperadas}
         df = df.rename(columns=renomeadas)
-
-        # Mantém apenas as colunas relevantes
         df = df[list(renomeadas.values())]
+
         series.append(df)
 
-        # Junta lado a lado mantendo todas as datas
+    # Junta tudo
     dados = pd.concat(series, axis=1, join="outer").sort_index()
     dados = dados.dropna(how="all")
 
-    print(f"✅ Dados combinados: {dados.shape[0]} linhas e {dados.shape[1]} colunas")
-    print("📅 Amostra:")
-    print(dados.head())
+    # ----- 🔥 Parte igual ao juntar_series -----
 
+    # cria Date como coluna
+    dados_reset = dados.copy()
+    dados_reset["Date"] = dados.index  # mesma saída que juntar_series
+
+    # reorganizar colunas: Date primeiro
+    colunas = ["Date"] + [c for c in dados_reset.columns if c != "Date"]
+
+    # salvar mesmo formato
+    dados_reset[colunas].to_csv(salvar, index=False)
+
+    print(f"💾 Arquivo salvo (formato juntar_series): {salvar}")
+
+    # ----- 🔍 Extra: correlação -----
     corr = dados.corr(numeric_only=True)
-
-    print("\n📊 Correlação entre séries (fechamento):")
+    print("\n📊 Correlação entre séries:")
     print(corr)
-
-    dados.to_csv("../data/dados_combinados.csv")
-    print("💾 Arquivo salvo: dados_combinados.csv")
 
     return dados, corr
 
+if __name__ == "__main__":
+    # ======================================================
+    # 🔵 1) PRIO3 x BRENT
+    # ======================================================
+    caminhos_prio = {
+        "PRIO3.SA": "dados_acao_PRIO3.SA_5y.csv",
+        "BZ=F": "dados_acao_BZ=F_5y.csv",
+    }
 
-caminhos = {
-    "PETR4.SA": "dados_acao_PETR4.SA_5y.csv",
-    "BZ=F": "dados_acao_BZ=F_5y.csv",
-    "USDBRL=X": "dados_acao_USDBRL=X_5y.csv"
-}
+    dados_prio = juntar_e_correlacionar_lado_a_lado(caminhos_prio, salvar="../data/dados_prio3_brent.csv")
 
-dados, corr = juntar_e_correlacionar_lado_a_lado(caminhos)
-plotar_series_temporais(dados, titulo="Comparação PETR4 x Brent x Dólar", normalizar=True)
-dados = pd.read_csv("../data/dados_combinados.csv", index_col=0, parse_dates=True)
-df, motifs, discord, picos = analisar_motifs_discords(
-    dados,
-    ticker="BZ=F",
-    janela=60,
-    n_motifs=5,
-    limite_volume=50_000
-)
+    plotar_series_temporais(dados_prio, titulo="PRIO3 x BRENT", normalizar=True)
 
-df, motifs, discord, picos = analisar_motifs_discords(
-    dados,
-    ticker="PETR4.SA",
-    janela=60,
-    n_motifs=5,
-    limite_volume=50_000_000
-)
+    dados_prio = pd.read_csv("../data/dados_prio3_brent.csv", index_col=0, parse_dates=True)
 
-"""
-para petr4 volume foi de 50_000_000
-para bz=F volume foi de 50_000
-"""
+    analisar_motifs_discords(
+        dados_prio,
+        ticker="PRIO3.SA",
+        janela=60,
+        n_motifs=5,
+        limite_volume=30_000_000
+    )
+
+    analisar_motifs_discords(
+        dados_prio,
+        ticker="BZ=F",
+        janela=60,
+        n_motifs=5,
+        limite_volume=50_000
+    )
+
+
+    # ======================================================
+    # 🔵 2) PETR4 x BRENT
+    # ======================================================
+    caminhos_petr = {
+        "PETR4.SA": "dados_acao_PETR4.SA_5y.csv",
+        "BZ=F": "dados_acao_BZ=F_5y.csv",
+    }
+
+    dados_petr = juntar_e_correlacionar_lado_a_lado(caminhos_petr, salvar="../data/dados_petr4_brent.csv")
+
+    plotar_series_temporais(dados_petr, titulo="PETR4 x BRENT", normalizar=True)
+
+    dados_petr = pd.read_csv("../data/dados_petr4_brent.csv", index_col=0, parse_dates=True)
+
+    analisar_motifs_discords(
+        dados_petr,
+        ticker="PETR4.SA",
+        janela=60,
+        n_motifs=5,
+        limite_volume=50_000_000
+    )
+
+    analisar_motifs_discords(
+        dados_petr,
+        ticker="BZ=F",
+        janela=60,
+        n_motifs=5,
+        limite_volume=50_000
+    )

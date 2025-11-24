@@ -1,178 +1,256 @@
-# 🧠 Análise de Eventos PETR4 e Brent com IA
+# 📘 **TimesSeriesAgent — Documentação Oficial (README)**
 
-Este projeto automatiza a **detecção de eventos relevantes** nas ações da **Petrobras (PETR4)** e no **petróleo Brent**, analisando variações abruptas nos preços e buscando **notícias e contexto** sobre os acontecimentos com auxílio de **modelos de linguagem (LLMs)** e da **API Tavily** para busca de notícias.
-
----
-
-## 🚀 Visão Geral do Fluxo
-
-O pipeline realiza automaticamente as seguintes etapas:
-
-1. **Detecta variações significativas** nos preços da PETR4 e do Brent.
-2. **Coleta notícias** relacionadas ao evento via API Tavily.
-3. **Resume as notícias** usando uma LLM (Llama 3.2 via Ollama).
-4. **Analisa o sentimento** e o possível **impacto de mercado**.
-5. **Produz um resumo estruturado** em formato JSON.
-6. **Salva todos os resultados** em arquivos JSON individuais e um CSV consolidado.
+*Sistema completo para previsão temporal com impacto de notícias reais*
 
 ---
 
-## 📊 Estrutura do Projeto
+# 📌 **Visão Geral do Projeto**
+
+O **TimesSeriesAgent** é um pipeline completo de previsão temporal que combina:
+
+* séries históricas (ativos e commodities)
+* eventos de notícias reais
+* agrupamento semântico por embeddings
+* geração automática da sequência de impacto (D0→D5)
+* modelos tradicionais (LSTM/GRU/MLP)
+* modelo híbrido (previsão + impacto de evento)
+
+O objetivo é gerar previsões temporalmente realistas incorporando o efeito de notícias relevantes no preço dos ativos.
+
+---
+
+# 🧱 **Arquitetura Geral do Sistema**
 
 ```
-.
-├── data/
-│   └── dados_combinados.csv      # Dados históricos de preços PETR4 e Brent
-├── output_noticias/
-│   ├── evento_2021-02-22_PETR4.json
-│   ├── evento_2021-03-09_Ambos.json
-│   └── eventos_consolidados.csv
-├── main.py                        # Script principal (este)
-└── README.md                      # Este arquivo
+1 ─ Preparação das Séries
+2 ─ Pipeline de Notícias e Eventos
+3 ─ Modelos de Previsão (Simples e Híbrido)
 ```
 
 ---
 
-## 🧩 Componentes Principais
+# 1️⃣ **Preparação das Séries (FASE 1)**
 
-### 1️⃣ **Detecção de Eventos**
+Scripts responsáveis por preparar, combinar e analisar séries históricas.
 
-Função: `detectar_eventos()`
+### **1.1 serietemporal.py**
 
-* Lê o arquivo `dados_combinados.csv`
-* Calcula as variações diárias em porcentagem (`pct_change * 100`)
-* Identifica dias com variação superior a `LIMIAR_VARIACAO` (default = 5%)
-* Classifica a origem do evento:
+* Junta séries históricas:
 
-  * `PETR4` → variação na ação da Petrobras
-  * `Brent` → variação no preço do petróleo
-  * `Ambos` → ambos variaram significativamente no mesmo dia
+  * PETR4 + BRENT
+  * PRIO3 + BRENT
+* Normalização
+* Criação de CSVs combinados (`dados_*.csv`)
+
+### **1.2 correlacao_ativos.py**
+
+Utilitário para:
+
+* analisar correlação entre ativos
+* identificar dependências e sincronização
+
+### **1.3 variancia_ativos.py**
+
+Ferramentas auxiliares:
+
+* cálculo de retornos
+* desvio padrão
+* volatilidade diária/móvel
+
+> Fase 1 prepara toda a base numérica necessária para as etapas seguintes.
 
 ---
 
-### 2️⃣ **Coleta de Notícias (Agente Coletor)**
+# 2️⃣ **Pipeline de Notícias e Eventos (FASE 2)**
 
-Função: `coletar_noticias(ativo, data_evento)`
+Esta fase coleta, interpreta e transforma notícias em eventos estruturados, extraindo *impacto temporal real* dos ativos.
 
-* Consulta a **API Tavily** com busca avançada de notícias.
-* Retorna até 3 resultados relevantes para a data.
-* Cada notícia é resumida via **LLM** (função `resumir_trecho`) para manter o conteúdo conciso.
+---
 
-Exemplo de retorno:
+## **2.1 agente_noticia.py**
 
-```text
-Título: Petrobras troca de presidente
-Link: https://g1.globo.com/economia/noticia/...
-Resumo: O presidente da Petrobras foi substituído após pressões do governo devido à alta nos combustíveis.
+Extrai informação relevante de uma notícia:
+
+* motivo principal
+* sentimento do mercado
+* quais ativos foram afetados
+* o que houve
+* fontes
+* resumos
+
+Resultado → arquivos:
+
+```
+output_noticias/evento_*.json
 ```
 
 ---
 
-### 3️⃣ **Análise de Sentimento (Agente Financeiro)**
+## **2.2 frases_cluster.py**
 
-Função: `analisar_sentimento(texto, preco_atual, data)`
+Agrupa motivos de eventos por similaridade semântica.
 
-* Utiliza uma LLM para:
-
-  * Classificar o **sentimento** (positivo, negativo ou neutro);
-  * Estimar o **impacto percentual** no preço;
-  * Projetar um **preço futuro** hipotético;
-  * Fornecer uma **justificativa curta** baseada nas notícias.
-
-Exemplo de saída:
-
-```
-Sentimento: NEGATIVO  
-Impacto estimado: -7%  
-Preço projetado: R$25.10  
-Justificativa: As notícias indicam intervenção política e substituição de diretoria, o que preocupa investidores.
-```
+* usa embeddings
+* detecta eventos “semelhantes”
+* cria clusters temáticos
+* permite calcular média de impacto por motivo
 
 ---
 
-### 4️⃣ **Resumo Estruturado (Agente Jornalista)**
+## **2.3 gerar_seq_eventos.py**
 
-Função: `resumir_noticias(texto, data)`
+O coração do pipeline de eventos.
 
-* A LLM gera um **resumo jornalístico estruturado** com os campos:
+Para cada `evento_*.json`:
 
-  * `data`
-  * `contexto` (econômico e político)
-  * `acontecimento` (o que ocorreu)
-  * `impacto` (sobre empresa e mercado)
-  * `fontes` (principais referências)
+1. identifica o ativo (ou ativos, no caso de AMBOS)
+2. lê automaticamente o CSV correspondente
+3. calcula D0 → D5 reais:
 
-Exemplo de retorno:
+   ```
+   seq = [ret_D0, ret_D1, ..., ret_D5]
+   ```
+4. paralisa a sequência se outro evento acontecer antes
+5. adiciona `seq` ao JSON
+6. limpa o arquivo removendo campos redundantes
+7. mantém somente:
+
+   * data
+   * ativo(s)
+   * retorno_no_dia
+   * motivos_identificados
+   * sentimento_do_mercado
+   * fontes
+   * o_que_houve
+   * seq
+
+Exemplo final:
 
 ```json
 {
-  "data": "22 de fevereiro de 2021",
-  "contexto": "Tensão política devido à interferência do governo na Petrobras.",
-  "acontecimento": "Troca do presidente da estatal após divergências sobre política de preços.",
-  "impacto": "Queda acentuada das ações da empresa e desvalorização no mercado.",
-  "fontes": "Reuters, G1, Valor Econômico"
+  "data": "2021-11-30",
+  "ativo": "AMBOS",
+  "retorno_no_dia": {"PRIO3": -2.63, "BRENT": -3.90},
+  "motivos_identificados": [...],
+  "sentimento_do_mercado": "negativo",
+  "seq": {
+    "PRIO3": [-2.63, -1.12, 0.55],
+    "BRENT": [-3.90, -2.20, -1.00, 0.85]
+  }
+}
+```
+
+> Fase 2 transforma eventos brutos em eventos com impacto temporal real.
+
+---
+
+# 3️⃣ **Modelos de Previsão (FASE 3)**
+
+---
+
+## **3.1 modelos tradicionais (LSTM / GRU / MLP)**
+
+Estes scripts treinam modelos preditivos usando apenas:
+
+* séries históricas
+* janelas fixas
+* normalização
+
+Eles geram a **previsão base** usada no modelo híbrido.
+
+---
+
+## **3.2 modelo híbrido (modelo_hibrido_eval.py)**
+
+Combina previsão + impacto de eventos:
+
+```
+previsao_final(t) = previsao_modelo(t) + impacto_evento(t)
+```
+
+O impacto pode vir de:
+
+* seq real do evento
+* média das seqs de eventos semelhantes
+* clustering semântico via embeddings
+
+O resultado é um modelo que:
+
+* entende padrões históricos
+* reage a notícias reais
+* replica choques de mercado
+* simula propagação temporal de impacto
+
+---
+
+# 🧩 **Estrutura dos Arquivos de Evento**
+
+Cada evento final contém:
+
+```json
+{
+  "data": "AAAA-MM-DD",
+  "ativo": "PETR4" | "PRIO3" | "BRENT" | "AMBOS",
+  "retorno_no_dia": 2.15,
+  "motivos_identificados": [...],
+  "sentimento_do_mercado": "positivo",
+  "fontes": [...],
+  "o_que_houve": "...",
+  "seq": {
+    "PETR4": [...],
+    "BRENT": [...]
+  }
 }
 ```
 
 ---
 
-### 5️⃣ **Geração dos Arquivos de Saída**
+# 🔥 **Fluxo Geral do Sistema**
 
-* Para cada evento detectado:
-
-  * Cria um arquivo JSON individual em `output_noticias/`
-  * Adiciona o evento a um **CSV consolidado** (`eventos_consolidados.csv`)
-
----
-
-## 🧠 Diagrama de Fluxo de Dados (Grafo)
-
-```mermaid
-graph TD
-
-A[📈 CSV de preços PETR4 e Brent] --> B[🧮 detectar_eventos()]
-B -->|variação > 5%| C[📰 coletar_noticias()]
-C --> D[✂️ resumir_trecho()]
-D --> E[🤖 analisar_sentimento()]
-E --> F[🗞️ resumir_noticias()]
-F --> G[💾 salvar JSON individual]
-G --> H[📊 consolidar CSV final]
+```
+[ séries históricas ]      → serietemporal
+         ↓
+[ CSVs combinados ]        → variancia + correlação
+         ↓
+[ notícias ]               → agente_noticia
+         ↓
+[ eventos brutos ]         → frases_cluster
+         ↓
+[ seq D0→D5 reais ]        → gerar_seq_eventos
+         ↓
+[ base de impacto ]
+         ↓
+[ previsão base ]          → modelos LSTM/GRU
+         ↓
+[ modelo híbrido ]         → previsão final ajustada por eventos
 ```
 
 ---
 
-## ⚙️ Tecnologias Utilizadas
+# 📎 **Estrutura do Repositório (sugestão)**
 
-| Componente                         | Descrição                                  |
-| ---------------------------------- | ------------------------------------------ |
-| **Python**                         | Linguagem principal do projeto             |
-| **Pandas**                         | Manipulação e análise de dados             |
-| **Babel**                          | Formatação de datas em português           |
-| **Tavily API**                     | Busca automatizada de notícias             |
-| **LangChain + Ollama (Llama 3.2)** | Modelos de linguagem para resumo e análise |
-| **Pydantic**                       | Estruturação dos dados de saída em JSON    |
-
----
-
-## 🧾 Execução
-
-### 1️⃣ Configurar dependências:
-
-```bash
-pip install pandas babel tavily langchain_ollama langchain_core pydantic
 ```
-
-### 2️⃣ Iniciar o servidor Ollama (caso local):
-
-```bash
-ollama serve
-ollama pull llama3.2
+TimesSeriesAgent/
+│
+├── data/
+│   ├── dados_petr4_brent.csv
+│   ├── dados_prio3_brent.csv
+│   └── ...
+│
+├── output_noticias/
+│   ├── evento_2021-11-30_PRIO3.json
+│   └── ...
+│
+├── src/
+│   ├── serietemporal.py
+│   ├── correlacao_ativos.py
+│   ├── variancia_ativos.py
+│   ├── agente_noticia.py
+│   ├── frases_cluster.py
+│   ├── gerar_seq_eventos.py
+│   ├── modelo_baseline_lstm.py
+│   └── modelo_hibrido_eval.py
+│
+├── README.md
+└── requirements.txt
 ```
-
-### 3️⃣ Rodar o script principal:
-
-```bash
-python main.py
-```
-
----

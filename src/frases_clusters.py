@@ -112,6 +112,7 @@ def gerar_ou_carregar_embeddings(frases):
 
     return emb
 
+
 def reclassificar_outros_semanticamente(df, emb_matrix):
     clusters_main = [
         "posi_petr4", "neg_petr4",
@@ -138,6 +139,8 @@ def reclassificar_outros_semanticamente(df, emb_matrix):
         df.at[i, "cluster"] = c1
 
     return df
+
+
 def definir_cluster(row):
     p, a = row["peso"], row["ativo"]
     if np.isnan(p):

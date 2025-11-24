@@ -1,181 +1,298 @@
 """
-build_impact_library.py
+===========================================
+Construção da Biblioteca de Impacto (Impact Library)
+===========================================
 
-Cria a "biblioteca de impacto" a partir dos arquivos gerados por frases_clusters_v12.py:
- - ../data/frases_impacto_clusters.csv
- - ../data/embeddings_frases.npy
- - ../data/embeddings_frases_meta.csv
+Este script processa dados de preços e eventos de mercado para gerar uma
+biblioteca histórica de impactos (“impact_library.json”). Essa biblioteca
+é utilizada pelo modelo híbrido para replicar o efeito de notícias reais
+nos preços futuros de cada ativo.
 
-Saídas:
- - ../data/impact_library.json   (estrutura principal: clusters -> stats, exemplos, centroid)
- - ../data/impact_library_embeddings.npy  (centroids / protótipos por cluster)
- - ../data/impact_library_meta.csv
+O algoritmo executa as seguintes etapas principais:
+
+1) CARREGAR MÚLTIPLAS BASES DE PREÇOS AUTOMATICAMENTE
+   - Lê todos os CSVs definidos na lista CSV_FILES.
+   - Junta todos em um único DataFrame, alinhando por data.
+   - Identifica automaticamente quais ativos existem nas colunas
+     (ex.: PETR4.SA, BZ=F, PRIO3.SA).
+
+2) IDENTIFICAR E CARREGAR EVENTOS
+   - Lê todos os arquivos evento_*.json em output_noticias/.
+   - Extrai datas de eventos e motivos identificados.
+
+3) EXTRAÇÃO DA SEQUÊNCIA REAL DE IMPACTO (D0 → Dn)
+   - Para cada evento e para cada ativo relevante:
+       • extrai a sequência de retornos reais a partir do dia da notícia
+       • segue pelos próximos dias (até HORIZON)
+       • interrompe caso outra notícia ocorra (sem sobreposição)
+       • respeita apenas dias úteis presentes no DataFrame
+
+4) AGRUPAMENTO EM CLUSTERS
+   - Cada evento é atribuído a um cluster simples baseado no ativo
+     e no sinal do impacto no D0 (positivo, negativo ou neutro).
+   - Exemplo de clusters:
+        posi_petr4, neg_petr4, posi_brent, neg_brent, posi_prio3, ...
+
+5) AGREGAÇÃO DAS SEQUÊNCIAS
+   - Para cada cluster:
+       • junta todas as sequências extraídas
+       • normaliza comprimento (preenchimento para alinhamento)
+       • calcula a mediana por dia (ref_seq)
+   - Essa "ref_seq" é o padrão histórico que será usado pelo modelo
+     para replicar impactos futuros.
+
+6) SALVAR A BIBLIOTECA FINAL
+   - Gera o arquivo impact_library.json com:
+       • sequência de referência (ref_seq)
+       • número de eventos no cluster
+       • exemplos utilizados na geração
+
+-------------------------------------------
+Funções principais
+-------------------------------------------
+
+detectar_ativos(df):
+    Identifica automaticamente quais ativos existem no DataFrame de preços.
+
+extrair_seq_sem_sobreposicao(df, data_evt, ativo, eventos_datas, horizon):
+    Extrai a sequência real de retornos após o evento, parando se houver
+    outra notícia subsequente.
+
+derivar_cluster(ativo, impacto_d0):
+    Atribui o evento a um cluster simples baseado no ativo e no sinal
+    do impacto do dia da notícia.
+
+build_library():
+    Orquestra todo o processo:
+       - lê CSVs
+       - carrega eventos
+       - extrai sequências por ativo
+       - agrupa em clusters
+       - gera a biblioteca final de impacto.
+
+===========================================
 """
+
 
 import os
 import json
 import numpy as np
 import pandas as pd
-from typing import Dict, Any
-from sklearn.metrics.pairwise import cosine_similarity
+from glob import glob
 
-# --- Configurações / caminhos ---
-INPUT_CSV = "../data/frases_impacto_clusters.csv"
-EMB_FILE = "../data/embeddings_frases.npy"
-EMB_META = "../data/embeddings_frases_meta.csv"
+# =========================================
+# CONFIG
+# =========================================
 
-OUT_LIB_JSON = "../data/impact_library.json"
-OUT_LIB_EMB = "../data/impact_library_embeddings.npy"
-OUT_LIB_META = "../data/impact_library_meta.csv"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+EVENTS_DIR = os.path.join(BASE_DIR, "output_noticias")
 
-# --- Parâmetros ---
-MIN_EXAMPLES_PER_CLUSTER = 3   # para registrar exemplos representativos
+# 🆕 VÁRIOS CSVs AUTOMÁTICOS
+CSV_FILES = [
+    os.path.join(DATA_DIR, "dados_petr4_brent.csv"),
+    os.path.join(DATA_DIR, "dados_prio3_brent.csv")
+]
+
+OUT_FILE = os.path.join(DATA_DIR, "impact_library.json")
+
+HORIZON = 5
 
 
-# --------------------
-# Funções essenciais
-# --------------------
+# =========================================
+# 1. Identificar ativos presentes no CSV
+# =========================================
 
-def load_inputs(csv_path: str = INPUT_CSV, emb_path: str = EMB_FILE, meta_path: str = EMB_META):
-    """
-    Carrega dataframe, embeddings e meta (motivo->cluster) gerados pelo passo anterior.
-    Retorna (df, emb, meta_df).
-    """
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"{csv_path} não encontrado. Rode frases_clusters_v12 primeiro.")
-    if not os.path.exists(emb_path):
-        raise FileNotFoundError(f"{emb_path} não encontrado. Rode frases_clusters_v12 primeiro.")
-    if not os.path.exists(meta_path):
-        raise FileNotFoundError(f"{meta_path} não encontrado. Rode frases_clusters_v12 primeiro.")
+def detectar_ativos(df):
+    ativos = set()
 
-    df = pd.read_csv(csv_path, encoding="utf-8-sig")
-    emb = np.load(emb_path)
-    meta = pd.read_csv(meta_path, encoding="utf-8-sig")
+    for col in df.columns:
+        if col.startswith("Close_"):
+            ticker = col.replace("Close_", "")
+            ativos.add(ticker)
 
-    # Sanity: garantir mesma ordem / tamanho
-    if len(df) != len(emb):
-        # em algumas versões meta tinha apenas motivo/cluster; aqui usamos df order
-        # tentar alinhar pelo motivo se meta estiver disponível
-        if "motivo" in meta.columns and len(meta) == len(emb):
-            # meta corresponde à ordem dos embeddings; reconstruir df a partir da meta
-            df_meta = meta.copy()
-            df_meta = df_meta.rename(columns={"motivo": "motivo_meta"})  # apenas evitar conflito
+    return sorted(ativos)
+
+
+# =========================================
+# 2. Extrair sequência sem sobreposição
+# =========================================
+
+def extrair_seq_sem_sobreposicao(df, data_evt, ativo, eventos_datas, horizon=HORIZON):
+    col = f"Close_{ativo}"
+
+    if col not in df.columns:
+        print(f"[ERRO] Coluna não encontrada: {col}")
+        return None
+
+    data_evt = pd.to_datetime(data_evt).normalize()
+    eventos_datas = sorted([pd.to_datetime(x).normalize() for x in eventos_datas])
+
+    # próximo evento após este
+    proximos = [d for d in eventos_datas if d > data_evt]
+    if proximos:
+        proximo_evento = proximos[0]
+    else:
+        proximo_evento = df.index.max()
+
+    seq = []
+    dia_atual = data_evt
+
+    for k in range(horizon + 1):
+
+        if dia_atual > proximo_evento:
+            break
+
+        while dia_atual not in df.index:
+            dia_atual += pd.Timedelta(days=1)
+            if dia_atual > proximo_evento or dia_atual > df.index.max():
+                break
+
+        if dia_atual not in df.index or dia_atual > proximo_evento:
+            break
+
+        dia_anterior = dia_atual - pd.Timedelta(days=1)
+        while dia_anterior not in df.index:
+            dia_anterior -= pd.Timedelta(days=1)
+            if dia_anterior < df.index.min():
+                return None
+
+        ret = (df.loc[dia_atual, col] - df.loc[dia_anterior, col]) / df.loc[dia_anterior, col] * 100
+        seq.append(float(ret))
+
+        dia_atual += pd.Timedelta(days=1)
+
+    return seq
+
+
+# =========================================
+# 3. Cluster simples
+# =========================================
+
+def derivar_cluster(ativo: str, impacto_d0: float) -> str:
+
+    base = ativo.replace(".SA", "").replace("=F", "").lower()
+
+    if impacto_d0 == 0 or pd.isna(impacto_d0):
+        return f"outros_{base}"
+
+    return f"posi_{base}" if impacto_d0 > 0 else f"neg_{base}"
+
+
+# =========================================
+# 4. Construir biblioteca
+# =========================================
+
+def build_library():
+
+    print("📌 Iniciando construção da biblioteca...")
+
+    # 👉 JUNTA TODOS OS CSVs EM UM ÚNICO DF
+    dfs = []
+    for f in CSV_FILES:
+        if os.path.exists(f):
+            d = pd.read_csv(f, index_col=0, parse_dates=True)
+            d.index = pd.to_datetime(d.index).normalize()
+            dfs.append(d)
+            print("✔ Lido:", f)
+
+    if not dfs:
+        print("❌ Nenhum CSV encontrado.")
+        return
+
+    # 🔥 merge automático de todos os ativos
+    df = pd.concat(dfs, axis=1).sort_index()
+    df = df.loc[:, ~df.columns.duplicated()]  # remove duplicatas
+
+    # identificar ativos reais no DF
+    ativos = detectar_ativos(df)
+    print("\n📌 Ativos detectados:", ativos)
+
+    # carregar eventos
+    files = sorted(glob(os.path.join(EVENTS_DIR, "evento_*.json")))
+
+    if not files:
+        print("❌ Nenhum evento encontrado.")
+        return
+
+    eventos = []
+    datas_eventos = []
+
+    for path in files:
+        j = json.load(open(path, "r", encoding="utf-8"))
+        eventos.append(j)
+        datas_eventos.append(pd.to_datetime(j["data"]).normalize())
+
+    datas_eventos = sorted(list(set(datas_eventos)))
+
+    clusters = {}
+
+    # =========================================
+    # PROCESSAR EVENTOS
+    # =========================================
+    for j in eventos:
+
+        data_evt = pd.to_datetime(j["data"]).normalize()
+        ativo_evt = j["ativo"].upper()
+
+        # Evento múltiplo?
+        if ativo_evt == "AMBOS":
+            ativos_evento = ativos  # todos os ativos existentes
         else:
-            raise RuntimeError("Comprimento de embeddings e csv diferente; verifique arquivos.")
-    return df, emb, meta
+            ativos_evento = [ativo_evt]
 
+        # para cada ativo
+        for atv in ativos_evento:
 
-def compute_cluster_centroids(df: pd.DataFrame, emb: np.ndarray) -> Dict[str, np.ndarray]:
-    """
-    Calcula o centróide (média) do embedding para cada cluster.
-    Retorna dicionário cluster -> centroid (numpy array).
-    """
-    centroids = {}
-    for cluster in sorted(df["cluster"].unique()):
-        idxs = df.index[df["cluster"] == cluster].tolist()
-        if not idxs:
-            continue
-        centroid = emb[idxs].mean(axis=0)
-        centroids[cluster] = centroid
-    return centroids
+            seq = extrair_seq_sem_sobreposicao(df, data_evt, atv, datas_eventos)
 
+            if not seq:
+                print(f"[WARN] Sequência vazia para {atv} em {data_evt.date()}")
+                continue
 
-def compute_cluster_stats(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
-    """
-    Calcula estatísticas por cluster: frequência, impacto médio, std, exemplos.
-    Retorna dicionário com stats por cluster.
-    """
-    stats = {}
-    groups = df.groupby("cluster")
-    for name, g in groups:
-        impacto_medio = float(g["peso_medio"].mean())
-        impacto_std = float(g["peso_medio"].std(ddof=0)) if len(g) > 1 else 0.0
-        freq = int(g.shape[0])
-        # Exemplo: pegar top-N motivos por frequência e ordená-los
-        exemplos = (g.groupby("motivo").agg(freq=("motivo", "count"),
-                                            impacto_media=("peso_medio", "mean"))
-                      .reset_index()
-                      .sort_values(["freq", "impacto_media"], ascending=[False, False])
-                      .head(10).to_dict(orient="records"))
-        stats[name] = {
-            "freq": freq,
-            "impacto_medio": impacto_medio,
-            "impacto_std": impacto_std,
-            "exemplos": exemplos
+            # impacto d0 vem do JSON corrigido
+            impacto = None
+            if ativo_evt == "AMBOS":
+                impacto = (
+                    j.get("impacto_d0_PETR4") if atv.startswith("PETR4") else
+                    j.get("impacto_d0_BRENT") if atv.startswith("BZ") else
+                    j.get("impacto_d0")  # fallback
+                )
+            else:
+                impacto = j.get("impacto_d0", 0)
+
+            cluster = derivar_cluster(atv, impacto)
+
+            clusters.setdefault(cluster, []).append({
+                "data": str(data_evt.date()),
+                "ativo": atv,
+                "motivos": j.get("motivos_identificados", []),
+                "seq": seq,
+                "d0": seq[0]
+            })
+
+    # =========================================
+    # AGREGAR E SALVAR
+    # =========================================
+
+    lib = {}
+
+    for c, items in clusters.items():
+        arr = np.array([it["seq"] for it in items], dtype=object)
+        max_len = max(len(x) for x in arr)
+        arr_fixed = np.array([x + [0.0] * (max_len - len(x)) for x in arr], dtype=float)
+
+        lib[c] = {
+            "ref_seq": np.median(arr_fixed, axis=0).tolist(),
+            "n_events": len(items),
+            "examples": items[:5]
         }
-    return stats
+
+    json.dump(lib, open(OUT_FILE, "w", encoding="utf-8"), indent=4, ensure_ascii=False)
+
+    print("\n✅ Biblioteca criada com sucesso!")
+    print("→", OUT_FILE)
 
 
-def build_impact_library(df: pd.DataFrame, emb: np.ndarray) -> Dict[str, Any]:
-    """
-    Constrói a biblioteca: para cada cluster guarda centroid, stats, e exemplos representativos.
-    Retorna a estrutura (dict) pronta para serializar em JSON.
-    """
-    centroids = compute_cluster_centroids(df, emb)
-    stats = compute_cluster_stats(df)
-
-    # montar entrada por cluster
-    library = {}
-    for cluster, centroid in centroids.items():
-        info = stats.get(cluster, {})
-        # transformar centroid em lista (JSON serializable) e normalizar escala se desejar
-        library[cluster] = {
-            "centroid": centroid.tolist(),
-            "freq": info.get("freq", 0),
-            "impacto_medio": info.get("impacto_medio", 0.0),
-            "impacto_std": info.get("impacto_std", 0.0),
-            "exemplos": info.get("exemplos", [])
-        }
-    # metadados gerais
-    library_meta = {
-        "n_clusters": len(library),
-        "clusters": list(library.keys())
-    }
-    return {"meta": library_meta, "library": library}
-
-
-def save_library(lib: Dict[str, Any], centroids: Dict[str, np.ndarray],
-                 lib_path: str = OUT_LIB_JSON, emb_out: str = OUT_LIB_EMB, meta_out: str = OUT_LIB_META):
-    """
-    Salva a biblioteca em JSON e os centroids em .npy para uso rápido.
-    Também salva um CSV meta com cluster, freq, impacto_medio.
-    """
-    os.makedirs(os.path.dirname(lib_path), exist_ok=True)
-    with open(lib_path, "w", encoding="utf-8") as f:
-        json.dump(lib, f, indent=2, ensure_ascii=False)
-
-    # salvar centroids como matriz (clusters ordenados)
-    clusters = list(lib["library"].keys())
-    cent_mat = np.vstack([np.array(lib["library"][c]["centroid"], dtype=np.float32) for c in clusters])
-    np.save(emb_out, cent_mat)
-
-    # salvar meta csv
-    rows = []
-    for c in clusters:
-        rows.append({
-            "cluster": c,
-            "freq": lib["library"][c]["freq"],
-            "impacto_medio": lib["library"][c]["impacto_medio"],
-            "impacto_std": lib["library"][c]["impacto_std"]
-        })
-    pd.DataFrame(rows).to_csv(meta_out, index=False, encoding="utf-8-sig")
-
-    print(f"Impact library salva em: {lib_path}")
-    print(f"Centroids salvos em: {emb_out}")
-    print(f"Meta salvo em: {meta_out}")
-
-
-def build_and_save(csv_path: str = INPUT_CSV, emb_path: str = EMB_FILE):
-    """
-    Fluxo principal curto para chamada externa.
-    """
-    df, emb, meta = load_inputs(csv_path, emb_path, EMB_META)
-    lib_struct = build_impact_library(df, emb)
-    save_library(lib_struct, centroids=None)  # centroids implícitos dentro do lib_struct
-
-
-# --------------------
-# Execução direta
-# --------------------
 if __name__ == "__main__":
-    build_and_save()
+    build_library()

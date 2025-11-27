@@ -1,194 +1,177 @@
-"""
-frases_clusters_v12.py
---------------------------------------------------
-Gera clusters semânticos dos motivos das notícias,
-com base no impacto_real (% real) produzido pelo agente_noticia.
-
-Agora usa impacto_real em vez de peso_de_correcao (-1..1).
-Projeta frases com PCA e UMAP, gera gráficos e salva embeddings.
-"""
-
 import os
 import json
-from glob import glob
-from dotenv import load_dotenv
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+from glob import glob
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics.pairwise import cosine_distances
 from openai import OpenAI
-from sklearn.decomposition import PCA
-from sklearn.metrics.pairwise import cosine_similarity
-import umap
-import plotly.graph_objects as go
-
-# =====================
-# CONFIGURAÇÕES
-# =====================
-PASTA_EVENTOS = "../output_noticias"
-ARQUIVO_SAIDA = "../data/frases_impacto_clusters.csv"
-ARQUIVO_EMBEDDINGS = "../data/embeddings_frases.npy"
-ARQUIVO_EMBEDDINGS_META = "../data/embeddings_frases_meta.csv"
-HTML_3D = "../img/graficos_motivos/frases_impacto_clusters.html"
-HTML_UMAP_INTERATIVO = "../img/graficos_motivos/frases_impacto_clusters_umap_interativo.html"
-HTML_HEATMAP = "../img/graficos_motivos/heatmap_clusters.html"
-HTML_RADAR = "../img/graficos_motivos/radar_clusters.html"
-RESUMO_CSV = "../data/resumo_clusters.csv"
-
-OPENAI_MODEL = "text-embedding-3-small"
-RECLASS_THRESHOLD = 0.65
-RECLASS_AMBOS = 0.60
+from dotenv import load_dotenv
 
 load_dotenv()
 client = OpenAI()
 
-def carregar_frases_com_peso(pasta):
-    arquivos = sorted(glob(os.path.join(pasta, "evento_*.json")))
-    frases = []
+# =========================================
+# CONFIG
+# =========================================
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EVENTS_DIR = os.path.join(BASE_DIR, "output_noticias")
+OUT_CSV = os.path.join(BASE_DIR, "data", "cluster_motivos.csv")
+EMBED_PATH = os.path.join(BASE_DIR, "data", "embeddings_frases.npy")
+
+
+# =========================================
+# Gerar embedding da frase
+# =========================================
+def embed_text(texto):
+    resp = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=texto
+    )
+    return resp.data[0].embedding
+
+
+# =========================================
+# Carregar todos os eventos e motivos
+# =========================================
+def carregar_eventos():
+    motivos = []
+    seqs = []
+    sentimentos = []
+
+    arquivos = sorted(glob(os.path.join(EVENTS_DIR, "evento_*.json")))
 
     for path in arquivos:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                j = json.load(f)
-        except:
-            continue
+        with open(path, "r", encoding="utf-8") as f:
+            j = json.load(f)
 
-        data = j.get("data")
-        ativo = str(j.get("ativo") or "").upper().strip()
-        motivos = j.get("motivos_identificados") or []
+        sentimento = j.get("sentimento_do_mercado", "neutro")
+        seq_dict = j.get("seq", {})
 
-        # impacto individual por ativo
-        if ativo in ["PETR4", "BRENT", "PRIO3"]:
-            peso = j.get("impacto_d0")
-            if peso is None:
-                continue
-            for m in motivos:
-                frases.append({
-                    "data": data,
-                    "ativo": ativo,
-                    "motivo": m.strip(),
-                    "peso": float(peso)
-                })
+        # cada seq p/ cada motivo
+        for ativo, seq in seq_dict.items():
+            for frase in j.get("motivos_identificados", []):
+                motivos.append(frase)
+                seqs.append(seq)
+                sentimentos.append(sentimento)
 
-        elif ativo == "AMBOS":
-            for nome_ativo, chave in [
-                ("PETR4", "impacto_d0_PETR4"),
-                ("BRENT", "impacto_d0_BRENT"),
-                ("PRIO3", "impacto_d0_PRIO3")
-            ]:
-                peso = j.get(chave)
-                if peso is not None:
-                    for m in motivos:
-                        frases.append({
-                            "data": data,
-                            "ativo": nome_ativo,
-                            "motivo": m.strip(),
-                            "peso": float(peso)
-                        })
-
-    df = pd.DataFrame(frases)
-    df = df.dropna(subset=["motivo"]).reset_index(drop=True)
-
-    if df.empty:
-        raise RuntimeError("Nenhuma frase carregada.")
-
-    return df
+    return motivos, seqs, sentimentos
 
 
-def gerar_ou_carregar_embeddings(frases):
-    if os.path.exists(ARQUIVO_EMBEDDINGS) and os.path.exists(ARQUIVO_EMBEDDINGS_META):
-        meta = pd.read_csv(ARQUIVO_EMBEDDINGS_META)
-        if len(meta) == len(frases):
-            return np.load(ARQUIVO_EMBEDDINGS)
+# =========================================
+# Geração de embeddings com alinhamento
+# =========================================
+def gerar_embeddings(motivos, save_path):
+    embeds = []
 
-    embs = []
-    for i in tqdm(range(0, len(frases), 64)):
-        batch = frases[i:i+64]
-        resp = client.embeddings.create(model=OPENAI_MODEL, input=batch)
-        for item in resp.data:
-            embs.append(item.embedding)
+    print(f"📌 Gerando embeddings para {len(motivos)} frases...")
 
-    emb = np.array(embs, dtype=np.float32)
-    np.save(ARQUIVO_EMBEDDINGS, emb)
+    for frase in motivos:
+        emb = embed_text(frase)
+        embeds.append(emb)
 
-    return emb
+    embeds = np.array(embeds)
+    np.save(save_path, embeds)
+    print("✔ Embeddings salvos em:", save_path)
 
-
-def reclassificar_outros_semanticamente(df, emb_matrix):
-    clusters_main = [
-        "posi_petr4", "neg_petr4",
-        "posi_brent", "neg_brent",
-        "posi_prio3", "neg_prio3"
-    ]
-
-    # calcular embeddings médios
-    medias = {}
-    for c in clusters_main:
-        idxs = df.index[df["cluster"] == c].tolist()
-        if idxs:
-            medias[c] = emb_matrix[idxs].mean(axis=0)
-
-    idx_outros = df.index[df["cluster"] == "outros"].tolist()
-
-    for i in idx_outros:
-        vec = emb_matrix[i].reshape(1, -1)
-        sims = {
-            c: cosine_similarity(vec, medias[c].reshape(1, -1))[0][0]
-            for c in medias
-        }
-        c1 = max(sims, key=sims.get)
-        df.at[i, "cluster"] = c1
-
-    return df
+    return embeds
 
 
-def definir_cluster(row):
-    p, a = row["peso"], row["ativo"]
-    if np.isnan(p):
-        return "outros"
-    if a == "PETR4":
-        return "posi_petr4" if p > 0 else "neg_petr4"
-    if a == "BRENT":
-        return "posi_brent" if p > 0 else "neg_brent"
-    if a == "PRIO3":
-        return "posi_prio3" if p > 0 else "neg_prio3"
-    return "outros"
+# =========================================
+# Clusterizar com SIMILARIDADE COSENO
+# =========================================
+def clusterizar_motivos_cosine(embeds, n_clusters=50):
+    print("📌 Clusterizando usando similaridade do coseno...")
 
-
-def main():
-    df = carregar_frases_com_peso(PASTA_EVENTOS)
-
-    # cluster base pelo impacto
-    df["cluster"] = df.apply(definir_cluster, axis=1)
-
-    # agregação por motivo
-    agrupado = (
-        df.groupby(["motivo", "cluster", "data", "ativo"])
-          .agg(peso_medio=("peso", "mean"), freq=("motivo", "count"))
-          .reset_index()
+    # Agglomerative com métrica COSENO
+    cluster = AgglomerativeClustering(
+        n_clusters=n_clusters,
+        metric='cosine',
+        linkage='average'
     )
 
-    # gerar embeddings
-    frases = agrupado["motivo"].tolist()
-    emb = gerar_ou_carregar_embeddings(frases)
+    labels = cluster.fit_predict(embeds)
+    return labels
 
-    # reclassificar semanticamente
-    agrupado = reclassificar_outros_semanticamente(agrupado, emb)
 
-    # salvar tabelas principais
-    agrupado.to_csv(ARQUIVO_SAIDA, index=False, encoding="utf-8-sig")
+# =========================================
+# Padronizar sequências
+# =========================================
+def padronizar_seqs(seqs):
+    max_len = max(len(s) for s in seqs)
+    pad = []
+    for s in seqs:
+        diff = max_len - len(s)
+        pad.append(s + [None] * diff)
+    return np.array(pad, dtype=object), max_len
 
-    meta = agrupado[["motivo", "cluster"]]
-    meta.to_csv(ARQUIVO_EMBEDDINGS_META, index=False, encoding="utf-8-sig")
 
-    resumo = agrupado.groupby(["cluster"]).agg(
-        num_frases=("motivo", "count"),
-        impacto_medio=("peso_medio", "mean")
-    ).reset_index()
+# =========================================
+# Média por cluster + sentimento probabilístico
+# =========================================
+def gerar_media_por_cluster(motivos, sentimentos, seqs, labels):
 
-    resumo.to_csv(RESUMO_CSV, index=False, encoding="utf-8-sig")
+    df = pd.DataFrame({
+        "motivo": motivos,
+        "sentimento": sentimentos,
+        "seq": seqs,
+        "cluster": labels
+    })
 
-    print("Processo concluído!")
+    linhas = []
+
+    for cl in sorted(df["cluster"].unique()):
+        grupo = df[df["cluster"] == cl]
+
+        seq_pad, max_len = padronizar_seqs(grupo["seq"].tolist())
+
+        # média dos seqs
+        seq_media = []
+        for col in range(max_len):
+            col_vals = [row[col] for row in seq_pad if row[col] is not None]
+            seq_media.append(np.mean(col_vals) if col_vals else None)
+
+        # distribuição do sentimento
+        total = len(grupo)
+        p_pos = sum(grupo["sentimento"] == "positivo") / total
+        p_neg = sum(grupo["sentimento"] == "negativo") / total
+        p_neu = sum(grupo["sentimento"] == "neutro") / total
+
+        linhas.append({
+            "cluster": cl,
+            "frase_exemplo": grupo.iloc[0]["motivo"],
+            "n_eventos": len(grupo),
+            "p_positivo": p_pos,
+            "p_negativo": p_neg,
+            "p_neutro": p_neu,
+            **{f"seq_d{i}": seq_media[i] if i < len(seq_media) else None for i in range(max_len)}
+        })
+
+    return pd.DataFrame(linhas)
+
+
+# =========================================
+# MAIN
+# =========================================
+def gerar_cluster_motivos():
+
+    print("📌 Carregando motivos e sequências...")
+    motivos, seqs, sentimentos = carregar_eventos()
+
+    print("📌 Gerando embeddings alinhados...")
+    embeds = gerar_embeddings(motivos, EMBED_PATH)
+
+    print("📌 Aplicando clusterização...")
+    labels = clusterizar_motivos_cosine(embeds)
+
+    print("📌 Calculando médias...")
+    df_final = gerar_media_por_cluster(motivos, sentimentos, seqs, labels)
+
+    print("📌 Salvando CSV final...")
+    df_final.to_csv(OUT_CSV, index=False)
+
+    print("✔ Arquivo salvo em:", OUT_CSV)
 
 
 if __name__ == "__main__":
-    main()
+    gerar_cluster_motivos()

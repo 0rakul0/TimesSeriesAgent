@@ -1,6 +1,6 @@
 """
+Treino com LSTM + Autoencoder
 --csv ../data/dados_petr4_brent.csv --epochs 120 --seq-len 30
-
 """
 
 import os
@@ -15,7 +15,8 @@ from sklearn.preprocessing import MinMaxScaler
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(BASE_DIR)
 
-from modelos.model_baseline_lstm import LSTMPrice
+# novo modelo com autoencoder
+from modelos.model_autoencoder_lstm import LSTMAutoencoderPrice
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -35,7 +36,7 @@ def preparar_dados(csv_path, seq_len=30):
     scaled = scaler.fit_transform(data)
 
     # target: Close
-    target_idx = [i for i,c in enumerate(cols) if "Close" in c][0]
+    target_idx = [i for i, c in enumerate(cols) if "Close" in c][0]
 
     X, y = [], []
     for i in range(len(scaled) - seq_len):
@@ -49,32 +50,48 @@ def preparar_dados(csv_path, seq_len=30):
 
 
 # -----------------------------
-# Treinar modelo baseline
+# Treinar modelo LSTM + Autoencoder
 # -----------------------------
-def treinar(csv_path, seq_len=30, epochs=40, lr=1e-3):
+def treinar(csv_path, seq_len=30, epochs=40, lr=1e-3, lambda_recon=0.2):
     print(f"[INFO] Carregando dados de {csv_path}...")
 
     X, y, scaler, cols, target_idx = preparar_dados(csv_path, seq_len)
 
-    model = LSTMPrice(input_size=X.shape[2]).to(DEVICE)
+    model = LSTMAutoencoderPrice(input_size=X.shape[2]).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = nn.MSELoss()
+
+    loss_pred = nn.MSELoss()
+    loss_recon = nn.MSELoss()
 
     for epoch in range(1, epochs + 1):
         model.train()
         opt.zero_grad()
 
-        pred = model(X.to(DEVICE))
-        loss = loss_fn(pred, y.to(DEVICE))
+        pred, recon = model(X.to(DEVICE))
+
+        # cabeça de previsão
+        l_pred = loss_pred(pred, y.to(DEVICE))
+
+        # reconstrução da sequência original
+        l_recon = loss_recon(recon, X.to(DEVICE))
+
+        # loss total
+        loss = l_pred + lambda_recon * l_recon
+
         loss.backward()
         opt.step()
 
         if epoch % 5 == 0 or epoch == 1:
-            print(f"Epoch {epoch}/{epochs}  Loss={loss.item():.6f}")
+            print(
+                f"Epoch {epoch}/{epochs} | "
+                f"Pred Loss={l_pred.item():.6f} | "
+                f"Recon Loss={l_recon.item():.6f} | "
+                f"Total={loss.item():.6f}"
+            )
 
     # salvar checkpoint
-    ativo = os.path.basename(csv_path).replace(".csv","").replace("dados_","")
-    save_path = os.path.join(BASE_DIR, "modelos", f"lstm_{ativo}.pt")
+    ativo = os.path.basename(csv_path).replace(".csv", "").replace("dados_", "")
+    save_path = os.path.join(BASE_DIR, "modelos", f"lstm_ae_{ativo}.pt")
 
     ckpt = {
         "model_state": model.state_dict(),
@@ -92,7 +109,5 @@ def treinar(csv_path, seq_len=30, epochs=40, lr=1e-3):
 # MAIN
 # -----------------------------
 if __name__ == "__main__":
-    csv = "../data/dados_prio3_brent.csv"
-    epochs = 120
-    seq_len = 30
-    treinar(csv, seq_len, epochs)
+    treinar("../data/dados_prio3_brent.csv", 30, 120)
+    treinar("../data/dados_petr4_brent.csv", 30, 120)

@@ -26,3 +26,4 @@ class LSTMPrice(nn.Module):
         out = out[:, -1, :]          # último timestep
         out = self.fc(out)
         return out
+

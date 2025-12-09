@@ -5,8 +5,7 @@ Treina LSTM SINGLE-ASSET para PETR4 usando model_baseline_lstm.py
 
 Uso:
   python treinar_ativo.py
-  --csv ../data/dados_petr4_brent.csv --out ../models/lstm_petr4.pt
-  --csv ../data/dados_prio3_brent.csv --out ../models/lstm_prio3.pt
+  --csv ../data/dados_<ATIVO>_brent.csv --out ../models/lstm_<ATIVO>.pt
 """
 import os, sys, argparse
 import numpy as np
@@ -22,10 +21,11 @@ sys.path.append(BASE_DIR)
 from modelos.model_baseline_lstm import LSTMPrice
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-SEQ_LEN = 30
-EPOCHS = 80
+SEQ_LEN = 15
+EPOCHS = 140
 LR = 1e-3
-def preparar_dados(csv_path, seq_len=30):
+
+def preparar_dados(csv_path, seq_len):
 
     df = pd.read_csv(csv_path, parse_dates=["Date"]).sort_values("Date").ffill().bfill()
 
@@ -88,10 +88,10 @@ def treinar(model, X, y):
         if ep % 5 == 0 or ep == 1:
             print(f"Epoch {ep}/{EPOCHS} | Loss={loss.item():.6f}")
 
-def main(csv, out):
+def treino_lstm(csv, out):
 
     print("Carregando dados...")
-    X, y, scaler, cols = preparar_dados(csv)
+    X, y, scaler, cols = preparar_dados(csv, seq_len=SEQ_LEN)
 
     print(f"Treinando LSTM para out={out}")
     model = LSTMPrice(input_size=X.shape[2]).to(DEVICE)
@@ -107,5 +107,6 @@ def main(csv, out):
     print(f"✔ Modelo salvo em {out}")
 
 if __name__ == "__main__":
-    main(csv="../data/dados_petr4_brent.csv", out="../modelos/lstm_petr4.pt")
-    main(csv="../data/dados_prio3_brent.csv", out="../modelos/lstm_prio3.pt")
+    treino_lstm(csv="../data/dados_petr4_brent.csv", out="../modelos/lstm_petr4.pt")
+    treino_lstm(csv="../data/dados_prio3_brent.csv", out="../modelos/lstm_prio3.pt")
+    treino_lstm(csv="../data/dados_exxo34_brent.csv", out="../modelos/lstm_exxo34.pt")

@@ -1,176 +1,299 @@
+# frases_clusters.py — CLUSTERIZAÇÃO HÍBRIDA COM FRASE CANÔNICA (VERSÃO FINAL CACHEADA)
+
 import os
 import json
 import numpy as np
 import pandas as pd
 from glob import glob
 from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics.pairwise import cosine_distances
-from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
-client = OpenAI()
+# ============================
+# IMPORTANTE: EmbeddingManager com CACHE
+# ============================
+from utils.embedding_manager import EmbeddingManager
 
-# =========================================
+load_dotenv()
+emb_mgr = EmbeddingManager()
+
+# ============================
 # CONFIG
-# =========================================
+# ============================
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EVENTS_DIR = os.path.join(BASE_DIR, "output_noticias")
-OUT_CSV = os.path.join(BASE_DIR, "data", "cluster_motivos.csv")
-EMBED_PATH = os.path.join(BASE_DIR, "data", "embeddings_frases.npy")
+OUT_DIR = os.path.join(BASE_DIR, "data")
+OUT_CSV = os.path.join(OUT_DIR, "cluster_motivos.csv")
 
+N_CLUSTERS_POR_ATIVO = 50
+MIN_MOTIVOS_POR_ATIVO = 100
+TOP_CENTER = 50
+RANDOM_SEED = 42
 
-# =========================================
-# Gerar embedding da frase
-# =========================================
-def embed_text(texto):
-    resp = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=texto
+np.random.seed(RANDOM_SEED)
+
+# ============================
+# EMBEDDING (usando cache!)
+# ============================
+def embed_text(texto: str):
+    """
+    Usa EmbeddingManager → garante:
+      - cache local persistente
+      - sem chamadas repetidas à API
+      - consistência com MVP e modelo híbrido
+    Retorna vetor shape (1536,)
+    """
+    try:
+        emb = emb_mgr.embed(texto)
+        return emb.reshape(-1)  # torna 1D
+    except Exception as e:
+        print("⚠ Erro ao gerar embedding:", e)
+        return np.zeros((1536,), dtype=float)
+
+# ============================
+# Oversample de frases (permanece igual)
+# ============================
+def gerar_variacoes_via_openai(frase, n=5):
+    from openai import OpenAI
+    client = OpenAI()
+
+    prompt = f"""
+Gere {n} variações naturais da frase abaixo, mantendo o mesmo significado.
+Retorne APENAS uma lista JSON de strings.
+
+Frase original:
+"{frase}"
+"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4,
+            max_tokens=200,
+        )
+        txt = resp.choices[0].message.content
+
+        import re, ast
+        m = re.search(r"\[.*\]", txt, flags=re.S)
+        if m:
+            return ast.literal_eval(m.group(0))
+
+    except Exception as e:
+        print("⚠ Erro variações:", e)
+
+    return [frase]
+
+# ============================
+# FRASE CANÔNICA DO CLUSTER
+# ============================
+def gerar_frase_canonica_cluster(frases_cluster, ativo):
+    frases_cluster = [f.strip() for f in frases_cluster if isinstance(f, str) and f.strip()]
+    if not frases_cluster:
+        return "Evento relevante no mercado."
+
+    # 1) embeddings (cacheado)
+    embeds = np.vstack([embed_text(f) for f in frases_cluster])
+    centroide = embeds.mean(axis=0)
+
+    sims = []
+    for frase, emb in zip(frases_cluster, embeds):
+        sim = float(emb @ centroide / (np.linalg.norm(emb) * np.linalg.norm(centroide) + 1e-12))
+        sims.append((sim, frase))
+
+    frases_centrais = [s[1] for s in sorted(sims, key=lambda x: x[0], reverse=True)[:TOP_CENTER]]
+    frases_txt = "\n".join(f"- {f}" for f in frases_centrais)
+
+    # 2) gerar resumo canônico via LLM
+    from openai import OpenAI
+    client = OpenAI()
+
+    prompt = f"""
+Você é um analista financeiro em 2025.
+
+As frases abaixo representam o núcleo semântico deste cluster.
+Resuma o conceito central em UMA frase curta, objetiva e atemporal.
+
+NÃO invente novos temas.
+Use somente o que está implícito nas frases.
+Mantenha o foco econômico e de mercado.
+
+Frases principais:
+{frases_txt}
+
+Retorne APENAS a frase final.
+"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4.1",
+            temperature=0.2,
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        frase_llm = resp.choices[0].message.content.strip()
+    except:
+        frase_llm = frases_centrais[0]
+
+    # 3) validação semântica
+    emb_canon = embed_text(frase_llm)
+    sim_canon = float(
+        emb_canon @ centroide / (np.linalg.norm(emb_canon) * np.linalg.norm(centroide) + 1e-12)
     )
-    return resp.data[0].embedding
 
+    if sim_canon < 0.70:
+        return frases_centrais[0]
 
-# =========================================
-# Carregar todos os eventos e motivos
-# =========================================
+    return frase_llm
+
+# ============================
+# Carregar eventos JSON
+# ============================
 def carregar_eventos():
-    motivos = []
-    seqs = []
-    sentimentos = []
-
     arquivos = sorted(glob(os.path.join(EVENTS_DIR, "evento_*.json")))
 
-    for path in arquivos:
-        with open(path, "r", encoding="utf-8") as f:
-            j = json.load(f)
+    motivos, seqs, sentimentos, ativos = [], [], [], []
 
-        sentimento = j.get("sentimento_do_mercado", "neutro")
-        seq_dict = j.get("seq", {})
+    for p in arquivos:
+        try:
+            j = json.load(open(p, "r", encoding="utf-8"))
+        except:
+            continue
 
-        # cada seq p/ cada motivo
-        for ativo, seq in seq_dict.items():
-            for frase in j.get("motivos_identificados", []):
-                motivos.append(frase)
+        ativo = str(j.get("ativo", "GENÉRICO")).upper()
+        seq = j.get("seq", {}).get(ativo, [])
+
+        frases = j.get("motivos_identificados", []) or []
+        sent = j.get("sentimento_do_mercado", "neutro")
+
+        for f in frases:
+            f = f.strip()
+            if f:
+                motivos.append(f)
                 seqs.append(seq)
-                sentimentos.append(sentimento)
+                sentimentos.append(sent)
+                ativos.append(ativo)
 
-    return motivos, seqs, sentimentos
+    return motivos, seqs, sentimentos, ativos
+
+# ============================
+# Oversample por ativo
+# ============================
+def oversample_motivos_por_ativo(motivos, seqs, sentimentos, ativos):
+    df = pd.DataFrame({"motivo": motivos, "seq": seqs, "sentimento": sentimentos, "ativo": ativos})
+
+    out_motivos, out_seqs, out_sent, out_ativos = [], [], [], []
+
+    for ativo, g in df.groupby("ativo"):
+        frases = g["motivo"].unique().tolist()
+
+        # base
+        out_motivos.extend(frases)
+        out_seqs.extend([g[g["motivo"] == f]["seq"].iloc[0] for f in frases])
+        out_sent.extend([g[g["motivo"] == f]["sentimento"].iloc[0] for f in frases])
+        out_ativos.extend([ativo] * len(frases))
+
+        # oversample (gera variações reais)
+        if len(frases) < MIN_MOTIVOS_POR_ATIVO:
+            need = MIN_MOTIVOS_POR_ATIVO - len(frases)
+            per_frase = max(1, int(np.ceil(need / len(frases))))
+
+            print(f"[OVERSAMPLE] ativo={ativo} → {need} novas frases")
+
+            for f in frases:
+                novas = gerar_variacoes_via_openai(f, n=per_frase)
+                for v in novas:
+                    out_motivos.append(v)
+                    out_seqs.append(g[g["motivo"] == f]["seq"].iloc[0])
+                    out_sent.append(g[g["motivo"] == f]["sentimento"].iloc[0])
+                    out_ativos.append(ativo)
+
+    return out_motivos, out_seqs, out_sent, out_ativos
+
+# ============================
+# Clusterização final
+# ============================
+def clusterizar_por_ativo(motivos, seqs, sentimentos, ativos):
+    df = pd.DataFrame({"motivo": motivos, "seq": seqs, "sentimento": sentimentos, "ativo": ativos})
+
+    resultados = []
+
+    for ativo, g in df.groupby("ativo"):
+        frases = g["motivo"].tolist()
+        if not frases:
+            continue
+
+        print(f"[CLUSTER] ativo={ativo} | motivos={len(frases)}")
+
+        # Embeddings consistentes e cacheados
+        embeds = np.vstack([embed_text(f) for f in frases])
+
+        # numero de clusters
+        k = min(N_CLUSTERS_POR_ATIVO, max(1, len(frases) // 2))
+
+        cluster = AgglomerativeClustering(
+            n_clusters=k,
+            metric="cosine",
+            linkage="average"
+        )
+        labels = cluster.fit_predict(embeds)
+
+        g["cluster"] = labels
+
+        # gerar clusters finais
+        for c in sorted(g["cluster"].unique()):
+            grp = g[g["cluster"] == c]
+            frases_cluster = grp["motivo"].tolist()
+
+            frase_canon = gerar_frase_canonica_cluster(frases_cluster, ativo)
+
+            seqs_raw = grp["seq"].tolist()
+            max_len = max((len(s) if isinstance(s, list) else 0) for s in seqs_raw)
+
+            seq_avg = []
+            for i in range(max_len):
+                vals = [s[i] for s in seqs_raw if isinstance(s, list) and len(s) > i and s[i] is not None]
+                seq_avg.append(np.mean(vals) if vals else None)
+
+            resultados.append({
+                "cluster": int(c),
+                "frase_exemplo": frase_canon,
+                "ativo_cluster": ativo,
+                "n_eventos": len(grp),
+                "frases_originais": frases_cluster,
+                **{f"seq_d{i}": seq_avg[i] for i in range(len(seq_avg))}
+            })
+
+        # salvar CSV por ativo
+        df_ativo = pd.DataFrame([r for r in resultados if r["ativo_cluster"] == ativo])
+        df_ativo.to_csv(os.path.join(OUT_DIR, f"cluster_{ativo.lower()}.csv"), index=False)
+        print(" → salvo cluster_", ativo.lower())
+
+    # salvar CSV combinado
+    pd.DataFrame(resultados).to_csv(OUT_CSV, index=False)
+    print("Clusters combinados salvos em:", OUT_CSV)
+
+    return pd.DataFrame(resultados)
 
 
-# =========================================
-# Geração de embeddings com alinhamento
-# =========================================
-def gerar_embeddings(motivos, save_path):
-    embeds = []
+# ============================
+# MAIN
+# ============================
+def gerar_cluster_motivos():
+    print("Carregando eventos…")
+    motivos, seqs, sentimentos, ativos = carregar_eventos()
+    print(f"{len(motivos)} motivos carregados")
 
-    print(f"📌 Gerando embeddings para {len(motivos)} frases...")
-
-    for frase in motivos:
-        emb = embed_text(frase)
-        embeds.append(emb)
-
-    embeds = np.array(embeds)
-    np.save(save_path, embeds)
-    print("✔ Embeddings salvos em:", save_path)
-
-    return embeds
-
-
-# =========================================
-# Clusterizar com SIMILARIDADE COSENO
-# =========================================
-def clusterizar_motivos_cosine(embeds, n_clusters=50):
-    print("📌 Clusterizando usando similaridade do coseno...")
-
-    # Agglomerative com métrica COSENO
-    cluster = AgglomerativeClustering(
-        n_clusters=n_clusters,
-        metric='cosine',
-        linkage='average'
+    print("Oversample…")
+    motivos2, seqs2, sent2, ativos2 = oversample_motivos_por_ativo(
+        motivos, seqs, sentimentos, ativos
     )
 
-    labels = cluster.fit_predict(embeds)
-    return labels
+    print("Clusterizando…")
+    df_final = clusterizar_por_ativo(motivos2, seqs2, sent2, ativos2)
 
-
-# =========================================
-# Padronizar sequências
-# =========================================
-def padronizar_seqs(seqs):
-    max_len = max(len(s) for s in seqs)
-    pad = []
-    for s in seqs:
-        diff = max_len - len(s)
-        pad.append(s + [None] * diff)
-    return np.array(pad, dtype=object), max_len
-
-
-# =========================================
-# Média por cluster + sentimento probabilístico
-# =========================================
-def gerar_media_por_cluster(motivos, sentimentos, seqs, labels):
-
-    df = pd.DataFrame({
-        "motivo": motivos,
-        "sentimento": sentimentos,
-        "seq": seqs,
-        "cluster": labels
-    })
-
-    linhas = []
-
-    for cl in sorted(df["cluster"].unique()):
-        grupo = df[df["cluster"] == cl]
-
-        seq_pad, max_len = padronizar_seqs(grupo["seq"].tolist())
-
-        # média dos seqs
-        seq_media = []
-        for col in range(max_len):
-            col_vals = [row[col] for row in seq_pad if row[col] is not None]
-            seq_media.append(np.mean(col_vals) if col_vals else None)
-
-        # distribuição do sentimento
-        total = len(grupo)
-        p_pos = sum(grupo["sentimento"] == "positivo") / total
-        p_neg = sum(grupo["sentimento"] == "negativo") / total
-        p_neu = sum(grupo["sentimento"] == "neutro") / total
-
-        linhas.append({
-            "cluster": cl,
-            "frase_exemplo": grupo.iloc[0]["motivo"],
-            "n_eventos": len(grupo),
-            "p_positivo": p_pos,
-            "p_negativo": p_neg,
-            "p_neutro": p_neu,
-            **{f"seq_d{i}": seq_media[i] if i < len(seq_media) else None for i in range(max_len)}
-        })
-
-    return pd.DataFrame(linhas)
-
-
-# =========================================
-# MAIN
-# =========================================
-def gerar_cluster_motivos():
-
-    print("📌 Carregando motivos e sequências...")
-    motivos, seqs, sentimentos = carregar_eventos()
-
-    print("📌 Gerando embeddings alinhados...")
-    embeds = gerar_embeddings(motivos, EMBED_PATH)
-
-    print("📌 Aplicando clusterização...")
-    labels = clusterizar_motivos_cosine(embeds)
-
-    print("📌 Calculando médias...")
-    df_final = gerar_media_por_cluster(motivos, sentimentos, seqs, labels)
-
-    print("📌 Salvando CSV final...")
-    df_final.to_csv(OUT_CSV, index=False)
-
-    print("✔ Arquivo salvo em:", OUT_CSV)
+    print("Finalizado.")
+    return df_final
 
 
 if __name__ == "__main__":

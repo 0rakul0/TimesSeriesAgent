@@ -1,92 +1,3 @@
-"""
-# 📘 EmbeddingManager — Guia de Uso (Resumo Oficial)
-
-O `EmbeddingManager` é o utilitário responsável por transformar frases em vetores semânticos (embeddings) de forma **rápida, consistente e econômica**, reutilizando informações sempre que possível.
-Ele combina três fontes de embeddings:
-
-1. **Cache local** (`emb_cache.json`)
-2. **Base pré-embeddada** (`frases_embedded.csv` + `embeddings_frases.npy`)
-3. **Fallback via API OpenAI**
-
-O objetivo é evitar cálculos repetidos, reduzir custo de API e garantir que frases semanticamente semelhantes recebam embeddings consistentes.
-
----
-
-## 🚀 Importação
-
-```python
-from utils.embedding_manager import EmbeddingManager
-
-emb = EmbeddingManager()
-```
-
----
-
-## 🔹 Gerar embedding de uma frase
-
-```python
-vetor = emb.embed("queda nos estoques de petróleo")
-```
-
-Pipeline interno:
-
-1. tenta recuperar do cache
-2. tenta buscar na base pré-embeddada
-3. tenta correspondência semântica (cosine similarity)
-4. se tudo falhar → gera via API e salva no cache
-
-O retorno é um vetor `1 × 1536`.
-
----
-
-## 🔹 Gerar embeddings em lote
-
-```python
-frases = [
-    "OPEP reduz produção",
-    "Demanda global aumenta",
-    "Estoques caem nos EUA"
-]
-
-matriz = emb.embed_lote(frases)
-```
-
-Retorna matriz Nx1536.
-
----
-
-## 🔹 Similaridade entre duas frases
-
-```python
-sim = emb.similaridade("queda nos estoques", "estoques caem nos EUA")
-print(sim)
-```
-
-Retorna similaridade do cosseno entre –1 e 1.
-
----
-
-## 🔹 Buscar frase mais semelhante da base
-
-```python
-frase_base, sim = emb.frase_mais_semelhante("produção da OPEP sobe")
-print(frase_base, sim)
-```
-
-Retorna a frase mais parecida da base pré-embeddada.
-
----
-
-## 🔹 Listar frases do cache
-
-```python
-emb.listar_cache()
-```
-
-Mostra todas as frases que já possuem embedding armazenado localmente.
-
-"""
-
 import os
 import json
 import numpy as np
@@ -107,16 +18,17 @@ class EmbeddingManager:
         model="text-embedding-3-small"
     ):
         """
-        base_dir = raiz do projeto (TimesSeriesAgent)
         threshold = similaridade mínima para reutilizar embedding existente
-        model = modelo de embedding da OpenAI
+        model = modelo OpenAI
         """
 
         self.client = OpenAI()
         self.threshold = float(threshold)
         self.model = model
 
-        # Resolver diretório raiz automaticamente
+        # -------------------------------
+        # Resolver diretório base
+        # -------------------------------
         if base_dir is None:
             self.BASE_DIR = os.path.dirname(
                 os.path.dirname(
@@ -126,23 +38,29 @@ class EmbeddingManager:
         else:
             self.BASE_DIR = base_dir
 
-        # Caminhos do sistema
+        # -------------------------------
+        # Caminhos
+        # -------------------------------
         self.CACHE_PATH = os.path.join(self.BASE_DIR, "data", "emb_cache.json")
         self.EMB_CSV_PATH = os.path.join(self.BASE_DIR, "data", "frases_embedded.csv")
         self.EMB_NPY_PATH = os.path.join(self.BASE_DIR, "models", "embeddings_frases.npy")
 
-        # -----------------------
+        # -------------------------------
         # 1. Carregar Cache JSON
-        # -----------------------
+        # -------------------------------
         if os.path.exists(self.CACHE_PATH):
-            with open(self.CACHE_PATH, "r", encoding="utf-8") as f:
-                self.cache = json.load(f)
+            try:
+                with open(self.CACHE_PATH, "r", encoding="utf-8") as f:
+                    self.cache = json.load(f)
+            except Exception as e:
+                print(f"[EMB] Cache corrompido ({e}). Criando novo cache limpo.")
+                self.cache = {}
         else:
             self.cache = {}
 
-        # -----------------------
+        # -------------------------------
         # 2. Carregar base pré-embedada
-        # -----------------------
+        # -------------------------------
         if os.path.exists(self.EMB_CSV_PATH) and os.path.exists(self.EMB_NPY_PATH):
             self.emb_df = pd.read_csv(self.EMB_CSV_PATH)
             self.emb_matrix = np.load(self.EMB_NPY_PATH)
@@ -151,42 +69,37 @@ class EmbeddingManager:
             self.emb_matrix = None
 
     # =====================================================================
-    # UTILIDADES INTERNAS
+    # UTILS
     # =====================================================================
-
     def _save_cache(self):
-        """Salva o cache no disco."""
         with open(self.CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
     def _normalize(self, frase: str) -> str:
-        """Normaliza frase para lookup no cache."""
         return frase.strip().lower()
 
-    # =====================================================================
-    # EMBEDDING PRINCIPAL (um por vez)
-    # =====================================================================
+    def _vector(self, emb):
+        """Garante shape (1,1536) independente da origem."""
+        arr = np.array(emb, dtype=float)
+        if arr.ndim == 1:
+            return arr.reshape(1, -1)
+        return arr
 
+    # =====================================================================
+    # EMBEDDING PRINCIPAL
+    # =====================================================================
     def embed(self, frase: str):
-        """
-        Retorna embedding da frase com pipeline:
-        1. Cache
-        2. Base CSV+NPY
-        3. Similaridade semântica
-        4. API OpenAI
-        """
-
         frase_norm = self._normalize(frase)
 
-        # ------------------------------------------
+        # --------------------------------------
         # A) CACHE DIRETO
-        # ------------------------------------------
+        # --------------------------------------
         if frase_norm in self.cache:
-            return np.array(self.cache[frase_norm]).reshape(1, -1)
+            return self._vector(self.cache[frase_norm])
 
-        # ------------------------------------------
-        # B) BUSCA EXATA NA BASE EMBEDDADA
-        # ------------------------------------------
+        # --------------------------------------
+        # B) BUSCA EXATA EM BASE PRE-EMBEDDADA
+        # --------------------------------------
         if self.emb_df is not None:
             match = self.emb_df[self.emb_df["frase"].str.lower() == frase_norm]
             if len(match) > 0:
@@ -195,21 +108,20 @@ class EmbeddingManager:
 
                 self.cache[frase_norm] = emb.tolist()
                 self._save_cache()
-                return emb.reshape(1, -1)
+                return self._vector(emb)
 
-        # ------------------------------------------
-        # C) BUSCA SEMÂNTICA — cosine similarity
-        # ------------------------------------------
+        # --------------------------------------
+        # C) MATCH SEMÂNTICO NA BASE PRE-EMBEDDADA
+        # --------------------------------------
         if self.emb_matrix is not None:
 
-            # gerar embedding temporário
-            emb_temp = self.client.embeddings.create(
+            temp = self.client.embeddings.create(
                 model=self.model,
                 input=frase_norm
             ).data[0].embedding
-            emb_temp = np.array(emb_temp).reshape(1, -1)
+            temp = np.array(temp).reshape(1, -1)
 
-            sims = cosine_similarity(emb_temp, self.emb_matrix)[0]
+            sims = cosine_similarity(temp, self.emb_matrix)[0]
             idx_best = int(np.argmax(sims))
             sim_best = float(sims[idx_best])
 
@@ -219,19 +131,19 @@ class EmbeddingManager:
                 self.cache[frase_norm] = emb.tolist()
                 self._save_cache()
 
-                print(f"[EMB] Match semântico: sim={sim_best:.3f} — usando embedding existente.")
-                return emb.reshape(1, -1)
+                print(f"[EMB] Match semântico reutilizado sim={sim_best:.3f}")
+                return self._vector(emb)
 
             print(f"[EMB] Frase nova — sim={sim_best:.3f}")
 
             # salvar embedding TEMP
-            self.cache[frase_norm] = emb_temp.tolist()
+            self.cache[frase_norm] = temp.flatten().tolist()
             self._save_cache()
-            return emb_temp
+            return temp
 
-        # ------------------------------------------
-        # D) API — fallback final
-        # ------------------------------------------
+        # --------------------------------------
+        # D) API — Fallback FINAL
+        # --------------------------------------
         print(f"[EMB] API fallback para frase nova: {frase_norm}")
 
         emb = self.client.embeddings.create(
@@ -239,54 +151,42 @@ class EmbeddingManager:
             input=frase_norm
         ).data[0].embedding
 
-        self.cache[frase_norm] = emb
+        arr = np.array(emb).reshape(1, -1)
+
+        self.cache[frase_norm] = arr.flatten().tolist()
         self._save_cache()
 
-        return np.array(emb).reshape(1, -1)
+        return arr
 
     # =====================================================================
     # EMBEDDING EM LOTE
     # =====================================================================
-
-    def embed_lote(self, frases: list):
-        """
-        Retorna embeddings para lista de frases.
-        Usa cache + base + similares + API minimamente.
-        """
+    def embed_lote(self, frases):
         return np.vstack([self.embed(f) for f in frases])
 
     # =====================================================================
-    # SIMILARIDADE ENTRE DUAS FRASES
+    # SIMILARIDADE
     # =====================================================================
-
-    def similaridade(self, frase1: str, frase2: str):
-        """
-        Similaridade semântica entre duas frases usando cosine similarity.
-        """
+    def similaridade(self, frase1, frase2):
         e1 = self.embed(frase1)
         e2 = self.embed(frase2)
         return float(cosine_similarity(e1, e2)[0][0])
 
     # =====================================================================
-    # BUSCAR FRASE MAIS SEMELHANTE NA BASE EMBEDDADA
+    # BUSCA FRASE MAIS SEMELHANTE
     # =====================================================================
-
-    def frase_mais_semelhante(self, frase: str):
-        """
-        Retorna (frase_base, similaridade) mais próxima da base embeddada.
-        """
+    def frase_mais_semelhante(self, frase):
         if self.emb_matrix is None:
             return None, None
 
         emb = self.embed(frase)
         sims = cosine_similarity(emb, self.emb_matrix)[0]
         idx = int(np.argmax(sims))
+
         return self.emb_df.iloc[idx]["frase"], float(sims[idx])
 
     # =====================================================================
-    # DEBUG / INSPEÇÃO
+    # DEBUG
     # =====================================================================
-
     def listar_cache(self):
-        """Lista frases no cache."""
         return list(self.cache.keys())

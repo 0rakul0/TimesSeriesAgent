@@ -85,7 +85,7 @@ def comparar_ativos_interativo(caminho_csv: str,
         yaxis_title="Retorno (%)",
         template="plotly_white"
     )
-    fig1.write_html(f"../img/retornos_{ticker_a}_vs_{ticker_b}.html")
+    fig1.write_html(fr"../img/retorno/retornos_{ticker_a}_vs_{ticker_b}.html")
 
 
     # ============================================================
@@ -107,7 +107,7 @@ def comparar_ativos_interativo(caminho_csv: str,
         yaxis_title="Correlação",
         template="plotly_white"
     )
-    fig2.write_html(f"../img/correlacao_{ticker_a}_vs_{ticker_b}.html")
+    fig2.write_html(fr"../img/correlacao/correlacao_{ticker_a}_vs_{ticker_b}.html")
 
     print("✅ Gráficos gerados com sucesso.")
     return df, eventos, corr
@@ -115,18 +115,17 @@ def comparar_ativos_interativo(caminho_csv: str,
 
 # Execução direta
 if __name__ == "__main__":
-    df, eventos, corr = comparar_ativos_interativo(
-        caminho_csv="../data/dados_petr4_brent.csv",
-        ticker_a="PETR4.SA",
-        ticker_b="BZ=F",
-        janela_rolling=30,
-        limiar=5.0
-    )
+    caminho =["../data/dados_petr4_brent.csv",
+              "../data/dados_prio3_brent.csv",
+              "../data/dados_EXXO34_brent.csv"]
+    a = ["PETR4.SA", "PRIO3.SA", "EXXO34.SA"]
+    b = "BZ=F"
 
-    df, eventos, corr = comparar_ativos_interativo(
-        caminho_csv="../data/dados_prio3_brent.csv",
-        ticker_a="PRIO3.SA",
-        ticker_b="BZ=F",
-        janela_rolling=30,
-        limiar=5.0
-    )
+    for i in range(len(caminho)):
+        comparar_ativos_interativo(
+            caminho_csv=caminho[i],
+            ticker_a=a[i],
+            ticker_b=b,
+            janela_rolling=30,
+            limiar=1.0
+        )

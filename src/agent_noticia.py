@@ -14,7 +14,7 @@ from tavily import TavilyClient
 load_dotenv()
 
 CAMINHO_SAIDA = "../output_noticias"
-LIMIAR_VARIACAO = 2.0
+LIMIAR_VARIACAO = 1.9
 
 os.makedirs(CAMINHO_SAIDA, exist_ok=True)
 
@@ -28,7 +28,7 @@ tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 EMPRESAS = {
     "PETR4.SA": "Petrobras",
     "PRIO3.SA": "PetroRio",
-    "VALE3.SA": "Vale",
+    "EXXO34.SA": "ExxonMobil",
     "BZ=F": "petróleo Brent"
 }
 
@@ -79,6 +79,48 @@ def _sem_evento_relevante(txt: str) -> bool:
         "fatores macroeconômicos"
     ]
     return any(p in txt for p in padroes)
+
+# ============================================================
+# FUNÇÃO: Escolher o motivo principal entre vários
+# ============================================================
+def escolher_motivo_principal(motivos: List[str]) -> List[str]:
+    """
+    Dado um conjunto de motivos, usa GPT para escolher somente o mais importante.
+    Retorna uma lista com apenas 1 motivo.
+    """
+
+    # Se só há 1 motivo, nada a fazer
+    if not motivos or len(motivos) == 1:
+        return motivos
+
+    prompt = f"""
+Dentre os motivos abaixo, escolha apenas aquele que representa a causa PRINCIPAL 
+do movimento do ativo no mercado. Responda somente com o texto exato do motivo.
+
+MOTIVOS:
+{json.dumps(motivos, ensure_ascii=False, indent=2)}
+"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4.1-mini",  # versão mais barata e ideal para tarefa simples
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+
+        escolha = resp.choices[0].message.content.strip()
+
+        # Garantir que seja exatamente um dos motivos originais
+        for m in motivos:
+            if escolha.lower() in m.lower():
+                return [m]
+
+        # fallback: retorna o primeiro
+        return [motivos[0]]
+
+    except Exception as e:
+        print(f"⚠ Erro ao escolher motivo principal: {e}")
+        return [motivos[0]]
 
 
 # ============================================================
@@ -196,8 +238,9 @@ NOTÍCIAS:
     dados["ativo"] = ativo
     dados["data"] = data_iso
 
-    return EventoNoticia(**dados)
+    dados["motivos_identificados"] = escolher_motivo_principal(dados.get("motivos_identificados", []))
 
+    return EventoNoticia(**dados)
 
 
 # ============================================================
@@ -241,9 +284,7 @@ def detectar_eventos(ticker, CAMINHO_DADOS):
         row = df.loc[data_evt]
         data_iso = data_evt.strftime("%Y-%m-%d")
 
-        if data_evt in eventos_a.index and data_evt in eventos_b.index:
-            ativo = "AMBOS"
-        elif data_evt in eventos_a.index:
+        if data_evt in eventos_a.index:
             ativo = ticker
         else:
             ativo = "BRENT"
@@ -256,69 +297,58 @@ def detectar_eventos(ticker, CAMINHO_DADOS):
 
         print(f"\n📅 {data_iso} | Ativo detectado: {ativo}")
 
-        if ativo == "AMBOS":
+        ret = row[f"Ret_{ticker}"] if ativo == ticker else row["Ret_BZ"]
+        fech = row[f"Close_{ticker}"] if ativo == ticker else row["Close_BZ=F"]
 
-            evento_a = consultar_evento_hibrido(ticker, data_iso, row[f"Ret_{ticker}"], row[f"Close_{ticker}"])
-            evento_b = consultar_evento_hibrido("BZ=F", data_iso, row["Ret_BZ"], row["Close_BZ=F"])
+        evento = consultar_evento_hibrido(ativo, data_iso, ret, fech)
 
-            registro = {
-                "data": data_iso,
-                "ativo": "AMBOS",
-                "retorno_no_dia": {
-                    ticker: row[f"Ret_{ticker}"],
-                    "BRENT": row["Ret_BZ"]
-                },
-                "fechamento": {
-                    ticker: row[f"Close_{ticker}"],
-                    "BRENT": row["Close_BZ=F"]
-                },
-                "motivos_identificados": list(
-                    dict.fromkeys(evento_a.motivos_identificados + evento_b.motivos_identificados)),
-                "fontes": list(dict.fromkeys(evento_a.fontes + evento_b.fontes)),
-                f"impacto_d0_{ticker}": row[f"Ret_{ticker}"],
-                "impacto_d0_BRENT": row["Ret_BZ"],
-                f"zscore_{ticker}": calcular_zscore(row[f"Ret_{ticker}"], std_a.loc[data_evt]),
-                "zscore_brent": calcular_zscore(row["Ret_BZ"], std_b.loc[data_evt]),
-                "o_que_houve": f"{ticker}: {evento_a.o_que_houve}\nBRENT: {evento_b.o_que_houve}"
-            }
+        registro = evento.model_dump()
+        registro["ativo"] = ativo.replace(".SA", "")
 
-            # 🔥 NORMALIZAR TICKERS (REMOVER .SA)
-            def normalize(x):
-                return x.replace(".SA", "").replace("=F", "")
-
-            # corrigir o retorno e fechamento
-            registro["retorno_no_dia"] = {normalize(k): v for k, v in registro["retorno_no_dia"].items()}
-            registro["fechamento"] = {normalize(k): v for k, v in registro["fechamento"].items()}
-
-            # corrigir nomes dos impactos
-            novo_registro = {}
-            for k, v in registro.items():
-                if "impacto_d0_" in k:
-                    novo_registro["impacto_d0_" + normalize(k[12:])] = v
-                else:
-                    novo_registro[k] = v
-            registro = novo_registro
-
-        else:
-            ret = row[f"Ret_{ticker}"] if ativo == ticker else row["Ret_BZ"]
-            fech = row[f"Close_{ticker}"] if ativo == ticker else row["Close_BZ=F"]
-
-            evento = consultar_evento_hibrido(ativo, data_iso, ret, fech)
-
-            registro = evento.model_dump()
-            registro["ativo"] = ativo.replace(".SA", "")
-
-            registro["impacto_d0"] = ret
-            registro["zscore_d0"] = calcular_zscore(
-                ret,
-                std_a.loc[data_evt] if ativo == ticker else std_b.loc[data_evt]
-            )
-
+        registro["impacto_d0"] = ret
+        registro["zscore_d0"] = calcular_zscore(
+            ret,
+            std_a.loc[data_evt] if ativo == ticker else std_b.loc[data_evt]
+        )
 
         with open(out, "w", encoding="utf-8") as f:
             json.dump(registro, f, indent=4, ensure_ascii=False)
 
         print(f"✅ Salvo: {out}")
+
+
+# ============================================================
+# FUNÇÃO: REMOVER JSONs QUE NÃO TÊM MOTIVOS IDENTIFICADOS
+# ============================================================
+def remover_jsons_sem_motivos(caminho_saida=CAMINHO_SAIDA):
+    print("\n🧹 Limpando eventos inválidos (sem motivos_identificados)...")
+
+    arquivos = [
+        os.path.join(caminho_saida, f)
+        for f in os.listdir(caminho_saida)
+        if f.endswith(".json")
+    ]
+
+    removidos = 0
+
+    for arq in arquivos:
+        try:
+            with open(arq, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+
+            # Se o campo não existe ou está vazio → remover
+            if "motivos_identificados" not in dados or not dados["motivos_identificados"]:
+                print(f"🗑 Removendo {os.path.basename(arq)} (sem motivos)")
+                os.remove(arq)
+                removidos += 1
+
+        except Exception as e:
+            # Caso arquivo corrompido → remove também
+            print(f"⚠ Erro ao ler {arq}: {e}. Removendo arquivo.")
+            os.remove(arq)
+            removidos += 1
+
+    print(f"✔ Limpeza concluída. Arquivos removidos: {removidos}")
 
 
 # ============================================================
@@ -328,7 +358,11 @@ if __name__ == "__main__":
     CAMINHOS = {
         "PETR4.SA": "../data/dados_petr4_brent.csv",
         "PRIO3.SA": "../data/dados_prio3_brent.csv",
+        "EXXO34.SA": "../data/dados_exxo34_brent.csv",
     }
 
     for ticker, caminho in CAMINHOS.items():
         detectar_eventos(ticker, caminho)
+
+    remover_jsons_sem_motivos()
+

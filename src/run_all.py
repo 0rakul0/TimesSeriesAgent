@@ -167,8 +167,8 @@ def run_pipeline():
     etapa_correlacao()
     etapa_comparacoes()
     etapa_eventos()
-    # etapa_clusterizacao()
-    # etapa_treinamento()
+    etapa_clusterizacao()
+    etapa_treinamento()
     etapa_avaliacao()
 
     print("\n🎯 PIPELINE COMPLETA FINALIZADA COM SUCESSO!\n")

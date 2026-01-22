@@ -99,7 +99,7 @@ def carregar_5_com_padding(csv_path, seq_len):
     if df.empty:
         raise RuntimeError("CSV vazio ou sem coluna Date válida.")
 
-    df5 = df.tail(5).reset_index(drop=True)
+    df5 = df.tail(10).reset_index(drop=True)
 
     # if already have seq_len+1 inside last 5, return the slice + extra business day row
     if len(df5) >= seq_len + 1:
@@ -159,7 +159,7 @@ def obter_cluster_de_motivo(motivos, ativo="PETR4"):
     return motivo, sim, clust_id, row
 
 
-def aplicar_residuo_extrapolativo(df_pred_full, num_last=5):
+def aplicar_residuo_extrapolativo(df_pred_full, num_last=10):
     """
     Média dos resíduos (Real - Pred) nos últimos num_last pontos disponíveis.
     """
@@ -197,9 +197,9 @@ def construir_datas_e_historico(df, col_close):
         raise RuntimeError("Dados vazios ou coluna close sem valores.")
 
     # pegar exatamente os últimos 5 pregões fechados (D-4..D0)
-    ultimos5 = df_valid.tail(5).copy()
+    ultimos5 = df_valid.tail(10).copy()
     # se tiver menos que 5, preencher com bdate_range antes do primeiro disponível
-    if len(ultimos5) < 5:
+    if len(ultimos5) < 10:
         last_date = df_valid["Date"].max()
         days = pd.bdate_range(end=last_date, periods=5)
         # tentar alinhar preços quando possível; caso contrário NaN

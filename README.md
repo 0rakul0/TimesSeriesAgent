@@ -1,256 +1,261 @@
-# 📘 **TimesSeriesAgent — Documentação Oficial (README)**
+# TimesSeriesAgent
 
-*Sistema completo para previsão temporal com impacto de notícias reais*
+## Visão Geral
 
----
+Este repositório implementa um **pipeline híbrido para previsão de séries temporais financeiras**, integrando modelos de *deep learning* (LSTM, Autoencoder LSTM e Transformer) com **análise semântica de notícias** e **modelagem explícita da propagação temporal de eventos informacionais**.
 
-# 📌 **Visão Geral do Projeto**
+O projeto é a base computacional do artigo:
 
-O **TimesSeriesAgent** é um pipeline completo de previsão temporal que combina:
+**"Da Notícia ao Preço: Mapeamento da Propagação de Eventos e Ajuste Residual em Modelos de Séries Temporais"**
 
-* séries históricas (ativos e commodities)
-* eventos de notícias reais
-* agrupamento semântico por embeddings
-* geração automática da sequência de impacto (D0→D5)
-* modelos tradicionais (LSTM/GRU/MLP)
-* modelo híbrido (previsão + impacto de evento)
-
-O objetivo é gerar previsões temporalmente realistas incorporando o efeito de notícias relevantes no preço dos ativos.
+O objetivo central é demonstrar que variações de mercado induzidas por notícias **não são ruído**, mas seguem **padrões recorrentes de propagação**, que podem ser aprendidos, armazenados e reutilizados como **ajustes residuais causais** em modelos preditivos.
 
 ---
 
-# 🧱 **Arquitetura Geral do Sistema**
+## Arquitetura Geral
 
-```
-1 ─ Preparação das Séries
-2 ─ Pipeline de Notícias e Eventos
-3 ─ Modelos de Previsão (Simples e Híbrido)
-```
+O pipeline completo é composto pelas seguintes etapas:
 
----
+1. **Coleta e sincronização de dados financeiros** (ativos + Brent)
+2. **Análise exploratória** (correlação móvel, motifs e discords)
+3. **Detecção automática de eventos** por limiar de retorno
+4. **Agente inteligente de notícias** (GPT + Tavily)
+5. **Extração semântica de motivos**
+6. **Geração de embeddings e clusterização semântica**
+7. **Construção de sequências reais de impacto (D0 → D4/D5)**
+8. **Treinamento de modelos base** (LSTM, AE, Transformer)
+9. **Aplicação do modelo híbrido** com:
 
-# 1️⃣ **Preparação das Séries (FASE 1)**
-
-Scripts responsáveis por preparar, combinar e analisar séries históricas.
-
-### **1.1 serietemporal.py**
-
-* Junta séries históricas:
-
-  * PETR4 + BRENT
-  * PRIO3 + BRENT
-* Normalização
-* Criação de CSVs combinados (`dados_*.csv`)
-
-### **1.2 correlacao_ativos.py**
-
-Utilitário para:
-
-* analisar correlação entre ativos
-* identificar dependências e sincronização
-
-### **1.3 variancia_ativos.py**
-
-Ferramentas auxiliares:
-
-* cálculo de retornos
-* desvio padrão
-* volatilidade diária/móvel
-
-> Fase 1 prepara toda a base numérica necessária para as etapas seguintes.
+   * ajuste por sequência histórica de impacto
+   * correção residual *walk-forward* (causal)
+10. **Avaliação quantitativa e visualização interpretável**
 
 ---
 
-# 2️⃣ **Pipeline de Notícias e Eventos (FASE 2)**
-
-Esta fase coleta, interpreta e transforma notícias em eventos estruturados, extraindo *impacto temporal real* dos ativos.
-
----
-
-## **2.1 agente_noticia.py**
-
-Extrai informação relevante de uma notícia:
-
-* motivo principal
-* sentimento do mercado
-* quais ativos foram afetados
-* o que houve
-* fontes
-* resumos
-
-Resultado → arquivos:
-
-```
-output_noticias/evento_*.json
-```
-
----
-
-## **2.2 frases_cluster.py**
-
-Agrupa motivos de eventos por similaridade semântica.
-
-* usa embeddings
-* detecta eventos “semelhantes”
-* cria clusters temáticos
-* permite calcular média de impacto por motivo
-
----
-
-## **2.3 gerar_seq_eventos.py**
-
-O coração do pipeline de eventos.
-
-Para cada `evento_*.json`:
-
-1. identifica o ativo (ou ativos, no caso de AMBOS)
-2. lê automaticamente o CSV correspondente
-3. calcula D0 → D5 reais:
-
-   ```
-   seq = [ret_D0, ret_D1, ..., ret_D5]
-   ```
-4. paralisa a sequência se outro evento acontecer antes
-5. adiciona `seq` ao JSON
-6. limpa o arquivo removendo campos redundantes
-7. mantém somente:
-
-   * data
-   * ativo(s)
-   * retorno_no_dia
-   * motivos_identificados
-   * sentimento_do_mercado
-   * fontes
-   * o_que_houve
-   * seq
-
-Exemplo final:
-
-```json
-{
-  "data": "2021-11-30",
-  "ativo": "AMBOS",
-  "retorno_no_dia": {"PRIO3": -2.63, "BRENT": -3.90},
-  "motivos_identificados": [...],
-  "sentimento_do_mercado": "negativo",
-  "seq": {
-    "PRIO3": [-2.63, -1.12, 0.55],
-    "BRENT": [-3.90, -2.20, -1.00, 0.85]
-  }
-}
-```
-
-> Fase 2 transforma eventos brutos em eventos com impacto temporal real.
-
----
-
-# 3️⃣ **Modelos de Previsão (FASE 3)**
-
----
-
-## **3.1 modelos tradicionais (LSTM / GRU / MLP)**
-
-Estes scripts treinam modelos preditivos usando apenas:
-
-* séries históricas
-* janelas fixas
-* normalização
-
-Eles geram a **previsão base** usada no modelo híbrido.
-
----
-
-## **3.2 modelo híbrido (modelo_hibrido_eval.py)**
-
-Combina previsão + impacto de eventos:
-
-```
-previsao_final(t) = previsao_modelo(t) + impacto_evento(t)
-```
-
-O impacto pode vir de:
-
-* seq real do evento
-* média das seqs de eventos semelhantes
-* clustering semântico via embeddings
-
-O resultado é um modelo que:
-
-* entende padrões históricos
-* reage a notícias reais
-* replica choques de mercado
-* simula propagação temporal de impacto
-
----
-
-# 🧩 **Estrutura dos Arquivos de Evento**
-
-Cada evento final contém:
-
-```json
-{
-  "data": "AAAA-MM-DD",
-  "ativo": "PETR4" | "PRIO3" | "BRENT" | "AMBOS",
-  "retorno_no_dia": 2.15,
-  "motivos_identificados": [...],
-  "sentimento_do_mercado": "positivo",
-  "fontes": [...],
-  "o_que_houve": "...",
-  "seq": {
-    "PETR4": [...],
-    "BRENT": [...]
-  }
-}
-```
-
----
-
-# 🔥 **Fluxo Geral do Sistema**
-
-```
-[ séries históricas ]      → serietemporal
-         ↓
-[ CSVs combinados ]        → variancia + correlação
-         ↓
-[ notícias ]               → agente_noticia
-         ↓
-[ eventos brutos ]         → frases_cluster
-         ↓
-[ seq D0→D5 reais ]        → gerar_seq_eventos
-         ↓
-[ base de impacto ]
-         ↓
-[ previsão base ]          → modelos LSTM/GRU
-         ↓
-[ modelo híbrido ]         → previsão final ajustada por eventos
-```
-
----
-
-# 📎 **Estrutura do Repositório (sugestão)**
+## Estrutura de Pastas
 
 ```
 TimesSeriesAgent/
 │
-├── data/
-│   ├── dados_petr4_brent.csv
-│   ├── dados_prio3_brent.csv
-│   └── ...
+├── data/                      # Bases processadas e artefatos finais
+│   ├── dados_*_brent.csv      # Séries sincronizadas (ativo + Brent)
+│   ├── cluster_motivos.csv    # Clusters semânticos globais
+│   ├── cluster_<ativo>.csv    # Clusters específicos por ativo
+│   ├── embeddings_frases.npy # Embeddings persistidos
+│   ├── embeddings_frases_meta.csv
+│   └── resultado_comparacao_modelos.csv
 │
-├── output_noticias/
-│   ├── evento_2021-11-30_PRIO3.json
-│   └── ...
+├── modelos/                   # Definições e pesos dos modelos
+│   ├── model_baseline_lstm.py
+│   ├── model_lstm_autoencoder.py
+│   ├── model_transformer_price.py
+│   ├── lstm_<ativo>.pt
+│   ├── lstm_ae_<ativo>.pt
+│   └── transformer_<ativo>.pt
 │
-├── src/
-│   ├── serietemporal.py
-│   ├── correlacao_ativos.py
-│   ├── variancia_ativos.py
-│   ├── agente_noticia.py
-│   ├── frases_cluster.py
-│   ├── gerar_seq_eventos.py
-│   ├── modelo_baseline_lstm.py
-│   └── modelo_hibrido_eval.py
+├── train/                     # Scripts de treinamento
+│   ├── treinar_ativo.py
+│   ├── treinar_ae_ativo.py
+│   └── treinar_transformer_ativo.py
 │
-├── README.md
-└── requirements.txt
+├── src/                       # Pipeline de dados e notícias
+│   ├── serietemporal.py       # Download e decomposição STL
+│   ├── correlacao_ativos.py   # Merge, correlação, motifs, discords
+│   ├── variacia_ativos.py     # Comparações exploratórias
+│   ├── agent_noticia.py       # Agente GPT + Tavily
+│   ├── seq_eventos.py         # Extração D0→D5 real
+│   └── frases_clusters.py     # Clusterização semântica
+│
+├── utils/
+│   └── embedding_manager.py   # Gerenciamento inteligente de embeddings
+│
+├── eval/
+│   ├── modelo_hibrido_offline.py  # Avaliação final híbrida
+│   └── plotter_refactor.py        # Visualizações interpretáveis
+│
+├── output_noticias/           # Eventos JSON estruturados
+│   └── evento_<ativo>_<data>.json
+│
+├── img/                       # Gráficos PNG / HTML
+│
+├── artigo/
+│   └── artigo_latex.tex       # Artigo científico final
+│
+└── README.md
 ```
+
+---
+
+## Descrição dos Principais Componentes
+
+### 1. Coleta e Pré-processamento
+
+**Arquivo:** `src/serietemporal.py`
+
+* Download incremental via *Yahoo Finance*
+* Sincronização ativo × Brent
+* Decomposição STL (tendência e sazonalidade)
+
+---
+
+### 2. Análise Exploratória
+
+**Arquivo:** `src/correlacao_ativos.py`
+
+* Correlação móvel (rolling correlation)
+* Identificação de *motifs* e *discords* (STUMPY)
+* Visualizações estáticas e interativas
+
+---
+
+### 3. Detecção de Eventos e Agente de Notícias
+
+**Arquivo:** `src/agent_noticia.py`
+
+* Gatilho por retorno absoluto ≥ 2%
+* Consulta híbrida:
+
+  * GPT puro
+  * Fallback Tavily + GPT
+* Saída estruturada em JSON com:
+
+  * motivos
+  * sentimento
+  * fontes
+
+---
+
+### 4. Sequência Real de Impacto
+
+**Arquivo:** `src/seq_eventos.py`
+
+* Extração automática de retornos:
+
+```
+[D0, D1, D2, D3, D4, D5]
+```
+
+* Interrupção causal se novo evento ocorrer
+
+---
+
+### 5. Embeddings e Clusterização Semântica
+
+**Arquivo:** `src/frases_clusters.py`
+
+* Embeddings OpenAI (`text-embedding-3-small`)
+* Oversampling semântico
+* Clusterização por ativo
+* Geração de **frase canônica** por cluster
+
+---
+
+### 6. Modelos Base
+
+Local: `modelos/`
+
+* `model_baseline_lstm.py`
+* `model_lstm_autoencoder.py`
+* `model_transformer_price.py`
+
+Treinamento:
+
+* `train/treinar_ativo.py`
+* `train/treinar_ae_ativo.py`
+* `train/treinar_transformer_ativo.py`
+
+---
+
+### 7. Modelo Híbrido com Correção Residual
+
+**Arquivo:** `eval/modelo_hibrido_offline.py`
+
+Inclui:
+
+* Aplicação da sequência média do cluster
+* Escala por similaridade semântica
+* Interrupção causal
+* Correção residual *walk-forward* (Ridge)
+
+---
+
+### 8. Avaliação e Visualização
+
+**Arquivo:** `eval/plotter_refactor.py`
+
+* Gráficos comparativos
+* Blocos de eventos
+* Interpretação visual do impacto informacional
+
+---
+
+## Execução do Pipeline (Resumo)
+
+```bash
+# 1. Baixar e preparar dados
+python src/serietemporal.py
+python src/correlacao_ativos.py
+
+# 2. Detectar eventos e notícias
+python src/agent_noticia.py
+python src/seq_eventos.py
+
+# 3. Clusterizar motivos
+python src/frases_clusters.py
+
+# 4. Treinar modelos
+python train/treinar_ativo.py
+python train/treinar_ae_ativo.py
+python train/treinar_transformer_ativo.py
+
+# 5. Avaliação híbrida final
+python eval/modelo_hibrido_offline.py
+```
+
+---
+
+## Requisitos (requirements.txt)
+
+```
+numpy
+pandas
+scikit-learn
+torch
+yfinance
+statsmodels
+stumpy
+matplotlib
+plotly
+tqdm
+python-dotenv
+openai
+tavily-python
+pydantic
+```
+
+---
+
+## Contribuição Científica
+
+Este projeto:
+
+* Introduz **propagação temporal explícita de notícias**
+* Reutiliza impactos históricos como **memória informacional**
+* Integra NLP + Deep Learning de forma causal
+* Aumenta acurácia **e interpretabilidade**
+
+---
+
+## Autores
+
+* Jefferson Silva dos Anjos
+* Luiz José Henrique Nogaroli Cavalcante
+* Eduardo Soares Ogasawara
+
+CEFET/RJ
+
+---
+
+## Licença
+
+Uso acadêmico e de pesquisa.

@@ -1,111 +1,55 @@
 #!/usr/bin/env python3
-"""
-Modelo Híbrido Avaliativo por Ativo (PETR4 / PRIO3 / EXXO34) — Versão Final Corrigida
 
-Inclui:
-✔ LSTM baseline
-✔ Autoencoder (previsão + reconstrução)
-✔ Aplicação de impacto real via clusters (escolhe motivo mais relevante por dia)
-✔ Scale automático por ativo
-✔ Correção residual WALK-FORWARD (sem data leakage) usando motivo/cluster relevante
-✔ Correção de shapes nas similaridades (resolve IndexError)
-✔ Filtragem de clusters por ativo (usa coluna ativo_cluster no CSV)
-"""
-
-# =====================================================================
-# IMPORTS
-# =====================================================================
-
-import glob
 import json
-import os
-import re
-import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-from dotenv import load_dotenv
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error
 
-load_dotenv()
-
-# ajustar path do projeto
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(BASE_DIR)
-
-# Import do EmbeddingManager (cache)
-from utils.embedding_manager import EmbeddingManager
-
-# instância global única do embedding manager — usa cache consistentemente
-emb_mgr = EmbeddingManager()
-
+from eval.plotter_refactor import plotar_comparacao_por_ativo, plotar_hibrido_corrigido
 from modelos.model_baseline_lstm import LSTMPrice
 from modelos.model_lstm_autoencoder import LSTMAutoencoderPrice
 from modelos.model_transformer_price import TransformerPrice
+from utils.embedding_manager import EmbeddingManager
+from utils.project_paths import DATA_DIR, IMG_DIR, MODELOS_DIR, OUTPUT_NOTICIAS_DIR, ensure_runtime_dirs
 
-from eval.plotter_refactor import plotar_hibrido_corrigido, plotar_comparacao_por_ativo
+ensure_runtime_dirs()
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+LOG_DIR = DATA_DIR / "experiment_logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-CLUSTER_CSV = os.path.join(BASE_DIR, "data", "cluster_motivos.csv")
-
-OUT_AE_PETR4  = os.path.join(BASE_DIR, "img", "previsao_autoencoder_petr4.html")
-OUT_AE_PRIO3  = os.path.join(BASE_DIR, "img", "previsao_autoencoder_prio3.html")
-OUT_AE_EXXO34 = os.path.join(BASE_DIR, "img", "previsao_autoencoder_exxo34.html")
-
-OUT_LSTM_PETR4  = os.path.join(BASE_DIR, "img", "previsao_hibrida_eval_petr4.html")
-OUT_LSTM_PRIO3  = os.path.join(BASE_DIR, "img", "previsao_hibrida_eval_prio3.html")
-OUT_LSTM_EXXO34 = os.path.join(BASE_DIR, "img", "previsao_hibrida_eval_exxo34.html")
-
-OUT_TR_PETR4  = os.path.join(BASE_DIR, "img", "previsao_transformer_petr4.html")
-OUT_TR_PRIO3  = os.path.join(BASE_DIR, "img", "previsao_transformer_prio3.html")
-OUT_TR_EXXO34 = os.path.join(BASE_DIR, "img", "previsao_transformer_exxo34.html")
-
+emb_mgr = EmbeddingManager()
 
 RESULTADOS = []
+PREVISOES_MODELOS = {}
+PREVISOES_HIBRIDOS = {}
 
-PREVISOES_MODELOS = {}     # armazenará -> {"PETR4 (LSTM)": df_pred, ...}
-PREVISOES_HIBRIDOS = {}    # armazenará -> {"PETR4 (LSTM)": df_hibrido, ...}
 
-
-# =====================================================================
-# LOADERS
-# =====================================================================
 def carregar_modelo_unificado(model_path, tipo="lstm"):
-    """
-    tipo: "lstm", "autoencoder", "transformer"
-    """
-    import numpy as np
     from sklearn.preprocessing import MinMaxScaler
 
-    # compatibilidade com objetos do checkpoint
     try:
         torch.serialization.add_safe_globals([np.ndarray, MinMaxScaler, dict, list, tuple])
     except Exception:
         pass
 
-    # carregar checkpoint
     ckpt = torch.load(model_path, map_location=DEVICE, weights_only=False)
-
     input_size = len(ckpt["train_columns"])
 
-    # selecionar modelo
     if tipo.lower() == "lstm":
-        model = LSTMPrice(
-            input_size=input_size
-        ).to(DEVICE)
-
+        model = LSTMPrice(input_size=input_size).to(DEVICE)
     elif tipo.lower() == "autoencoder":
         model = LSTMAutoencoderPrice(
             input_size=input_size,
             hidden_size=128,
             latent_size=64,
             num_layers=2,
-            dropout=0.1
+            dropout=0.1,
         ).to(DEVICE)
-
     elif tipo.lower() == "transformer":
         model = TransformerPrice(
             input_size=input_size,
@@ -113,27 +57,21 @@ def carregar_modelo_unificado(model_path, tipo="lstm"):
             nhead=4,
             num_layers=3,
             dim_feedforward=256,
-            dropout=0.1
+            dropout=0.1,
         ).to(DEVICE)
-
     else:
         raise ValueError(f"Tipo desconhecido de modelo: {tipo}")
 
     model.load_state_dict(ckpt["model_state"])
     model.eval()
-
     return model, ckpt["scaler"], ckpt["train_columns"], ckpt["seq_len"]
 
 
-# =====================================================================
-# PREVISÃO LSTM & AE
-# =====================================================================
-
 def detectar_coluna_close(train_cols):
-    closes = [c for c in train_cols if c.startswith("Close_")]
+    closes = [col for col in train_cols if col.startswith("Close_")]
     if closes:
         return closes[0]
-    closes = [c for c in train_cols if "Close" in c]
+    closes = [col for col in train_cols if "Close" in col]
     if not closes:
         raise KeyError("Nenhuma coluna Close encontrada no checkpoint.")
     return closes[0]
@@ -144,10 +82,9 @@ def prever_unificado(model, scaler, df, seq_len, train_cols, tipo="lstm"):
     target_col = detectar_coluna_close(train_cols)
     target_idx = train_cols.index(target_col)
 
-    # garante que TODAS as colunas existem
-    for c in train_cols:
-        if c not in df2.columns:
-            df2[c] = 0.0
+    for col in train_cols:
+        if col not in df2.columns:
+            df2[col] = 0.0
 
     arr = scaler.transform(df2[train_cols])
     preds, reals, dates = [], [], []
@@ -166,7 +103,6 @@ def prever_unificado(model, scaler, df, seq_len, train_cols, tipo="lstm"):
             else:
                 pred_s = model(seq_tensor).cpu().numpy().item()
 
-        # desnormalizar
         zeros = np.zeros((1, len(train_cols)))
         zeros[0, target_idx] = pred_s
         inv = scaler.inverse_transform(zeros)[0, target_idx]
@@ -175,73 +111,127 @@ def prever_unificado(model, scaler, df, seq_len, train_cols, tipo="lstm"):
         reals.append(df2.loc[i + seq_len, target_col])
         dates.append(pd.to_datetime(df2.loc[i + seq_len, "Date"]))
 
-    return pd.DataFrame(
-        {"Date": dates, "Pred": preds, "Real": reals}
-    ).set_index("Date")
+    return pd.DataFrame({"Date": dates, "Pred": preds, "Real": reals}).set_index("Date")
 
-
-# =====================================================================
-# EXTRAÇÃO DE MOTIVOS
-# =====================================================================
 
 def extrair_motivos(pasta_json):
-
-    arquivos = glob.glob(os.path.join(pasta_json, "evento_*.json"))
     noticias = {}
-
-    for arq in arquivos:
+    for arquivo in sorted(Path(pasta_json).glob("evento_*.json")):
         try:
-            j = json.load(open(arq, "r", encoding="utf-8"))
-            d = pd.to_datetime(j["data"]).normalize()
-
-            motivos = j.get("motivos_identificados", []) or []
-            motivos = [m.strip() for m in motivos if isinstance(m, str) and m.strip()]
+            with arquivo.open("r", encoding="utf-8") as handle:
+                registro = json.load(handle)
+            data = pd.to_datetime(registro["data"]).normalize()
+            motivos = [mot.strip() for mot in registro.get("motivos_identificados", []) if isinstance(mot, str) and mot.strip()]
             if motivos:
-                noticias.setdefault(d, []).extend(motivos)
-        except:
-            pass
-
+                noticias.setdefault(data, []).extend(motivos)
+        except Exception:
+            continue
     return noticias
 
 
-def escolher_motivo_mais_relevante(motivos, emb_mgr_local, emb_repr):
-    """
-    Retorna o motivo com maior similaridade a qualquer cluster.
-    (mantido para compatibilidade)
-    """
+def carregar_biblioteca_eventos(pasta_json):
+    rows = []
+    for arquivo in sorted(Path(pasta_json).glob("evento_*.json")):
+        try:
+            with arquivo.open("r", encoding="utf-8") as handle:
+                registro = json.load(handle)
+        except Exception:
+            continue
+
+        data = pd.to_datetime(registro.get("data")).normalize()
+        ativo = str(registro.get("ativo", "GENERICO")).upper()
+        seq_map = registro.get("seq", {}) or {}
+        seq = seq_map.get(ativo) or []
+        if not seq:
+            continue
+
+        motivos = [mot.strip() for mot in registro.get("motivos_identificados", []) if isinstance(mot, str) and mot.strip()]
+        for motivo in motivos:
+            rows.append(
+                {
+                    "date": data,
+                    "ativo": ativo,
+                    "motivo": motivo,
+                    "seq": list(seq),
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=["date", "ativo", "motivo", "seq", "embedding"])
+
+    df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+    df["embedding"] = [np.asarray(emb_mgr.embed(motivo)).reshape(-1) for motivo in df["motivo"]]
+    return df
+
+
+def _ativo_from_nome(nome):
+    token = str(nome).upper().strip().split()[0]
+    return token
+
+
+def _event_library_filter(df, ativo, cutoff_date):
+    ativos_validos = {ativo.upper(), "BRENT", "GENERICO"}
+    return df[(df["date"] < cutoff_date) & (df["ativo"].isin(ativos_validos))].copy()
+
+
+def _similaridade_coseno(vetor, matriz):
+    vetor = np.asarray(vetor).reshape(1, -1)
+    matriz = np.asarray(matriz)
+    if matriz.ndim == 1:
+        matriz = matriz.reshape(1, -1)
+    num = vetor @ matriz.T
+    den = np.linalg.norm(vetor, axis=1, keepdims=True) * np.linalg.norm(matriz, axis=1) + 1e-12
+    return (num / den).flatten()
+
+
+def recuperar_impacto_historico(motivos, cutoff_date, biblioteca_eventos, ativo, top_k=5, sim_threshold=0.70):
     if not motivos:
-        return None, None
+        return None
 
-    emb_repr_mat = np.asarray(emb_repr)
-    if emb_repr_mat.ndim == 1:
-        emb_repr_mat = emb_repr_mat.reshape(1, -1)
+    historico = _event_library_filter(biblioteca_eventos, ativo, cutoff_date)
+    if historico.empty:
+        return None
 
-    melhor_motivo = None
-    melhor_sim = -1.0
+    candidatos = []
+    emb_matrix = np.vstack(historico["embedding"].values)
 
-    for mot in motivos:
-        emb = emb_mgr_local.embed(mot)
-        emb = np.asarray(emb).reshape(1, -1)
+    for motivo in motivos:
+        emb = np.asarray(emb_mgr.embed(motivo)).reshape(-1)
+        sims = _similaridade_coseno(emb, emb_matrix)
+        if sims.size == 0:
+            continue
 
-        # similaridade com todos clusters
-        emb_norm = np.linalg.norm(emb, axis=1, keepdims=True)
-        repr_norm = np.linalg.norm(emb_repr_mat, axis=1, keepdims=True)
-        sim_vec = (emb @ emb_repr_mat.T) / (emb_norm * repr_norm.T + 1e-12)
+        hist = historico.copy()
+        hist["sim"] = sims
+        hist["motivo_atual"] = motivo
+        candidatos.append(hist)
 
-        sim = float(np.max(sim_vec))
+    if not candidatos:
+        return None
 
-        if sim > melhor_sim:
-            melhor_sim = sim
-            melhor_motivo = mot
+    candidatos_df = pd.concat(candidatos, ignore_index=True)
+    candidatos_df = candidatos_df[candidatos_df["sim"] >= sim_threshold]
+    if candidatos_df.empty:
+        return None
 
-    return melhor_motivo, melhor_sim
+    candidatos_df = candidatos_df.sort_values(["sim", "date"], ascending=[False, False]).head(top_k).reset_index(drop=True)
+    max_len = max(len(seq) for seq in candidatos_df["seq"])
+    seq_avg = []
+    for i in range(max_len):
+        valores = [seq[i] for seq in candidatos_df["seq"] if len(seq) > i and seq[i] is not None]
+        seq_avg.append(float(np.average(valores, weights=candidatos_df.loc[[idx for idx, seq in enumerate(candidatos_df["seq"]) if len(seq) > i and seq[i] is not None], "sim"])) if valores else np.nan)
+
+    return {
+        "motivo_atual": str(candidatos_df.iloc[0]["motivo_atual"]),
+        "similaridade": float(candidatos_df["sim"].mean()),
+        "n_historico": int(len(candidatos_df)),
+        "seq_media": seq_avg,
+        "datas_referencia": [pd.to_datetime(d).strftime("%Y-%m-%d") for d in candidatos_df["date"].tolist()],
+        "motivos_referencia": candidatos_df["motivo"].tolist(),
+    }
 
 
 def motivo_e_cluster_mais_relevante(motivos, emb_mgr_local, emb_repr, clusters_df, ativo):
-    """
-    Seleciona o motivo mais relevante filtrando clusters por ativo e aplicando pesos.
-    Retorna: motivo, sim_weighted, cluster_id, row
-    """
     if not motivos:
         return None, 0.0, None, None
 
@@ -250,223 +240,37 @@ def motivo_e_cluster_mais_relevante(motivos, emb_mgr_local, emb_repr, clusters_d
         emb_repr_mat = emb_repr_mat.reshape(1, -1)
 
     ativo = (ativo or "").upper()
-    ativos_permitidos = [ativo, "BRENT", "GENÉRICO"]
-
-    # se não existir coluna ativo_cluster, não filtra
-    if "ativo_cluster" not in clusters_df.columns:
-        mask = pd.Series([True] * len(clusters_df), index=clusters_df.index)
+    permitidos = [ativo, "BRENT", "GENERICO", "GENÉRICO"]
+    if "ativo_cluster" in clusters_df.columns:
+        mask = clusters_df["ativo_cluster"].astype(str).str.upper().isin(permitidos)
+        clusters_df_f = clusters_df[mask].reset_index(drop=True)
+        emb_f = emb_repr_mat[mask.values] if len(clusters_df_f) == len(mask[mask]) else emb_repr_mat
     else:
-        mask = clusters_df["ativo_cluster"].astype(str).str.upper().isin(ativos_permitidos)
-
-    if mask.sum() == 0:
-        return None, 0.0, None, None
-
-    clusters_df_f = clusters_df[mask].reset_index(drop=True)
-    try:
-        emb_f = emb_repr_mat[mask.values]
-    except Exception:
+        clusters_df_f = clusters_df.reset_index(drop=True)
         emb_f = emb_repr_mat
 
-    if emb_f.ndim == 1:
-        emb_f = emb_f.reshape(1, -1)
+    if clusters_df_f.empty:
+        return None, 0.0, None, None
 
-    # pesos por tipo de ativo
-    peso_map = {
-        ativo: 1.0,
-        "BRENT": 0.75,
-        "GENÉRICO": 0.5
-    }
-
-    best = {"motivo": None, "sim": -1, "cluster": None, "row": None}
-    for mot in motivos:
-        emb = emb_mgr_local.embed(mot)
-        emb = np.asarray(emb).reshape(1, -1)
-
-        emb_norm = np.linalg.norm(emb, axis=1, keepdims=True)
-        repr_norm = np.linalg.norm(emb_f, axis=1, keepdims=True)
-        sim_vec = (emb @ emb_f.T) / (emb_norm * repr_norm.T + 1e-12)
-
-        if sim_vec.size == 0:
-            continue
-
-        # calcular sim ponderada pelo ativo do cluster
-        sims = sim_vec.flatten()
-        sims_weighted = []
-        for i, s in enumerate(sims):
-            try:
-                tipo = str(clusters_df_f.iloc[i]["ativo_cluster"]).upper()
-            except Exception:
-                tipo = "GENÉRICO"
-            peso = peso_map.get(tipo, 0.5)
-            sims_weighted.append(float(s) * float(peso))
-
-        idx = int(np.argmax(sims_weighted))
-        sim_w = float(sims_weighted[idx])
-        if sim_w > best["sim"]:
-            try:
-                row = clusters_df_f.iloc[idx]
-                cluster_id = int(row["cluster"]) if "cluster" in row.index else None
-            except Exception:
-                row = None
-                cluster_id = None
-            best.update({"motivo": mot, "sim": sim_w, "cluster": cluster_id, "row": row})
+    best = {"motivo": None, "sim": -1.0, "cluster": None, "row": None}
+    for motivo in motivos:
+        emb = np.asarray(emb_mgr_local.embed(motivo)).reshape(1, -1)
+        sims = _similaridade_coseno(emb, emb_f)
+        idx = int(np.argmax(sims))
+        sim = float(sims[idx])
+        if sim > best["sim"]:
+            row = clusters_df_f.iloc[idx]
+            cluster_id = int(row["cluster"]) if "cluster" in row else idx
+            best.update({"motivo": motivo, "sim": sim, "cluster": cluster_id, "row": row})
 
     return best["motivo"], best["sim"], best["cluster"], best["row"]
 
 
-# =====================================================================
-#                     IMPACTO REAL (clusters)
-# =====================================================================
-
-def encontrar_scale_otimo(pred_df, motivos_por_data, emb_mgr_local, clusters_df, emb_repr, ativo):
-    candidatos = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    melhor, menor = 0.5, float("inf")
-
-    for scale in candidatos:
-        temp = aplicar_seq_real(
-            pred_df, motivos_por_data, emb_mgr_local, clusters_df, emb_repr,
-            ativo=ativo, sim_threshold=0.7, max_horizon=4, scale=scale
-        )
-        rmse = np.sqrt(mean_squared_error(temp["Real"], temp["Pred_Ajustado"]))
-        print(f"[TUNING] scale={scale} → RMSE={rmse:.4f}")
-
-        if rmse < menor:
-            menor = rmse
-            melhor = scale
-
-    print(f"✔ SCALE ÓTIMO = {melhor}\n")
-    return melhor
-
-from openai import OpenAI
-client = OpenAI()
-
-
-def escolher_cluster_com_llm(motivos_do_dia,
-                             clusters_df,
-                             emb_mgr_local,
-                             ativo,
-                             top_k=3):
-    """
-    Etapas:
-    1. Pega o embedding de cada motivo do dia.
-    2. Calcula similaridade com TODOS os clusters.
-    3. Seleciona os TOP-K mais similares.
-    4. Envia os candidatos para a LLM decidir o cluster final.
-    5. Retorna (melhor_motivo, score_final, cluster_id, row CSV)
-    """
-
-    if not motivos_do_dia:
-        return None, 0.0, None, None
-
-    # === embeddings dos clusters canônicos ===
-    frases_canon = clusters_df["frase_exemplo"].astype(str).tolist()
-    emb_clusters = emb_mgr_local.embed_lote(frases_canon)
-
-    # === embeddings dos motivos do dia ===
-    emb_mots = [emb_mgr_local.embed(m) for m in motivos_do_dia]
-
-    # média dos embeddings do dia
-    emb_day = np.mean(np.vstack(emb_mots), axis=0)
-
-    # === similaridade coseno ===
-    sims = emb_clusters @ emb_day / (
-        np.linalg.norm(emb_clusters, axis=1) * np.linalg.norm(emb_day) + 1e-12
-    )
-
-    # top-k índices dos clusters
-    idx_top = sims.argsort()[::-1][:top_k]
-
-    # extrair dados dos clusters candidatos
-    candidatos = clusters_df.iloc[idx_top].copy()
-    candidatos["sim"] = sims[idx_top]
-
-    # preparar descrição para LLM
-    blocos = []
-    for _, row in candidatos.iterrows():
-        frases_originais = row.get("frases_originais", "")
-        if isinstance(frases_originais, str):
-            pass
-        elif isinstance(frases_originais, list):
-            frases_originais = "\n".join(f"- {f}" for f in frases_originais)
-
-        blocos.append(
-            f"""
-CLUSTER {int(row['cluster'])}
-Frase canônica: {row['frase_exemplo']}
-Similaridade inicial: {row['sim']:.3f}
-Frases originais do cluster:
-{frases_originais}
-"""
-        )
-    texto_clusters = "\n\n".join(blocos)
-
-    motivos_txt = "\n".join(f"- {m}" for m in motivos_do_dia)
-
-    prompt = f"""
-Você é um analista financeiro em 2025.
-Seu trabalho é escolher qual CLUSTER representa melhor os MOTIVOS DO DIA.
-
-Considere:
-- ativo analisado: {ativo}
-- motivos do dia:
-{motivos_txt}
-
-Clusters candidatos:
-{texto_clusters}
-
-REGRAS:
-- Escolha exatamente UM cluster.
-- Avalie semanticamente as frases originais do cluster.
-- Use as frases canônicas como resumo auxiliar.
-- NÃO invente fatos.
-- NÃO escolha cluster que não tenha relação causável com o motivo do dia.
-- Responda somente JSON no formato:
-
-{{
- "cluster_escolhido": <id>,
- "justificativa": "<texto curto>"
-}}
-
-Agora responda:
-"""
-
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4.1",
-            response_format={"type": "json_object"},
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-
-        data = resp.choices[0].message.parsed
-        cid = int(data["cluster_escolhido"])
-        row = clusters_df[clusters_df["cluster"] == cid].iloc[0]
-        return motivos_do_dia[0], sims[cid], cid, row
-
-    except Exception as e:
-        print("⚠ Erro LLM:", e)
-        # fallback: cluster mais similar
-        cid = int(candidatos.iloc[0]["cluster"])
-        row = candidatos.iloc[0]
-        return motivos_do_dia[0], float(candidatos.iloc[0]["sim"]), cid, row
-
-
-def aplicar_seq_real(pred_df, motivos_por_data, emb_mgr_local, clusters_df, emb_repr,
-                     ativo, sim_threshold=0.7, max_horizon=4, scale=0.4):
-    """
-    Aplica a sequência média do cluster mais relevante para o motivo mais relevante do dia.
-    Filtra clusters por ativo (aceita BRENT e GENÉRICO).
-    """
-
+def aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo, sim_threshold=0.7, max_horizon=4, scale=0.4, decision_log=None):
     df = pred_df.copy()
-    if "Pred_Ajustado" not in df.columns:
-        df["Pred_Ajustado"] = df["Pred"].copy()
-
+    df["Pred_Ajustado"] = df.get("Pred_Ajustado", df["Pred"]).astype(float)
     dias = df.index
     eventos = sorted(motivos_por_data.keys())
-
-    # garantir formatos
-    emb_repr_mat = np.asarray(emb_repr)  # shape (N, D)
 
     for data_evt in eventos:
         motivos = motivos_por_data.get(data_evt, [])
@@ -477,99 +281,100 @@ def aplicar_seq_real(pred_df, motivos_por_data, emb_mgr_local, clusters_df, emb_
         if pos >= len(dias):
             continue
 
-        futuras = [d for d in eventos if d > data_evt]
-
-        # selecionar apenas o motivo+cluster mais relevantes para o dia (filtrando por ativo)
-        motivo, best_sim, clust_id, row = motivo_e_cluster_mais_relevante(
-            motivos, emb_mgr_local, emb_repr_mat, clusters_df, ativo
-        )
-
-        if row is None or best_sim < sim_threshold:
+        contexto = recuperar_impacto_historico(motivos, data_evt, biblioteca_eventos, ativo, sim_threshold=sim_threshold)
+        if contexto is None:
+            if decision_log is not None:
+                decision_log.append(
+                    {
+                        "event_date": pd.to_datetime(data_evt).strftime("%Y-%m-%d"),
+                        "ativo": ativo,
+                        "motivos": json.dumps(motivos, ensure_ascii=False),
+                        "selected_motivo": None,
+                        "avg_similarity": 0.0,
+                        "historical_events_used": 0,
+                        "reference_dates": "[]",
+                        "reference_motivos": "[]",
+                        "applied_scale": scale,
+                        "source": "seq",
+                        "status": "no_historical_match",
+                    }
+                )
             continue
 
-        # extrair sequência do cluster selecionado
-        seq = []
-        for k in range(max_horizon + 1):
-            col = f"seq_d{k}"
-            seq.append(float(row[col]) if (col in row.index and pd.notna(row[col])) else None)
+        futuras = [d for d in eventos if d > data_evt]
+        seq = contexto["seq_media"]
 
-        # aplicar impacto sequencial
-        for k, impacto in enumerate(seq):
-            if impacto is None:
+        if decision_log is not None:
+            decision_log.append(
+                {
+                    "event_date": pd.to_datetime(data_evt).strftime("%Y-%m-%d"),
+                    "ativo": ativo,
+                    "motivos": json.dumps(motivos, ensure_ascii=False),
+                    "selected_motivo": contexto["motivo_atual"],
+                    "avg_similarity": contexto["similaridade"],
+                    "historical_events_used": contexto["n_historico"],
+                    "reference_dates": json.dumps(contexto["datas_referencia"], ensure_ascii=False),
+                    "reference_motivos": json.dumps(contexto["motivos_referencia"], ensure_ascii=False),
+                    "applied_scale": scale,
+                    "source": "seq",
+                    "status": "applied",
+                }
+            )
+
+        for k, impacto in enumerate(seq[: max_horizon + 1]):
+            if pd.isna(impacto):
                 break
-
             idx_d = pos + k
             if idx_d >= len(dias):
                 break
-
-            diaK = dias[idx_d]
-
-            # se existir outra notícia entre data_evt (exclusive) e diaK (inclusive), interrompe
-            if any((f > data_evt and f <= diaK) for f in futuras):
+            dia_k = dias[idx_d]
+            if any((f > data_evt and f <= dia_k) for f in futuras):
                 break
-
-            ajuste = scale * best_sim * (impacto / 100.0)
-            df.loc[diaK, "Pred_Ajustado"] *= (1 + ajuste)
-
-            # debug opcional:
-            # print(f"[SEQ] {data_evt.date()} motivo='{motivo}' cluster={clust_id} D{k}: {impacto:+.2f}% sim={best_sim:.3f}")
+            ajuste = scale * contexto["similaridade"] * (float(impacto) / 100.0)
+            df.loc[dia_k, "Pred_Ajustado"] *= (1 + ajuste)
 
     return df
 
 
-# =====================================================================
-#           MÉTODO B-WF — WALK-FORWARD RESIDUAL CORRECTION
-# =====================================================================
-
-def aplicar_walkforward_residual(pred_df, motivos_por_data, emb_mgr_local, clusters_df, emb_repr, ativo, janela):
-    """
-    Correção residual CAUSAL usando motivo+cluster filtrado por ativo.
-    """
-
+def aplicar_walkforward_residual(pred_df, motivos_por_data, biblioteca_eventos, ativo, janela, base_col="Pred_Ajustado", decision_log=None):
     df = pred_df.copy().reset_index()
-    if "Pred_Ajustado" not in df.columns:
-        df["Pred_Ajustado"] = df["Pred"].copy()
+    df["Base_Residual"] = df[base_col].astype(float)
+    df["r"] = df["Real"] - df["Base_Residual"]
 
-    df["r"] = df["Real"] - df["Pred_Ajustado"]
-
-    # preparar emb_repr
-    emb_repr_mat = np.asarray(emb_repr)
-    if emb_repr_mat.ndim == 1:
-        emb_repr_mat = emb_repr_mat.reshape(1, -1)
-
-    sims = []
-    eventos = []
-    cluster_ids = []
-
-    for d in df["Date"]:
-        dnorm = pd.to_datetime(d).normalize()
+    sims, eventos, hist_counts = [], [], []
+    for data in df["Date"]:
+        dnorm = pd.to_datetime(data).normalize()
         motivos = motivos_por_data.get(dnorm, [])
-
-        if motivos:
-            eventos.append(1)
-            # escolher o motivo + cluster mais relevante (filtrado por ativo)
-            mot, sim, clust, row = motivo_e_cluster_mais_relevante(
-                motivos, emb_mgr_local, emb_repr_mat, clusters_df, ativo
+        contexto = recuperar_impacto_historico(motivos, dnorm, biblioteca_eventos, ativo) if motivos else None
+        eventos.append(1 if motivos else 0)
+        sims.append(float(contexto["similaridade"]) if contexto else 0.0)
+        hist_counts.append(int(contexto["n_historico"]) if contexto else 0)
+        if motivos and decision_log is not None:
+            decision_log.append(
+                {
+                    "event_date": pd.to_datetime(dnorm).strftime("%Y-%m-%d"),
+                    "ativo": ativo,
+                    "motivos": json.dumps(motivos, ensure_ascii=False),
+                    "selected_motivo": contexto["motivo_atual"] if contexto else None,
+                    "avg_similarity": float(contexto["similaridade"]) if contexto else 0.0,
+                    "historical_events_used": int(contexto["n_historico"]) if contexto else 0,
+                    "reference_dates": json.dumps(contexto["datas_referencia"], ensure_ascii=False) if contexto else "[]",
+                    "reference_motivos": json.dumps(contexto["motivos_referencia"], ensure_ascii=False) if contexto else "[]",
+                    "applied_scale": None,
+                    "source": "residual",
+                    "status": "feature_only" if contexto else "no_historical_match",
+                }
             )
-            sims.append(sim if sim is not None else 0.0)
-            cluster_ids.append(clust if clust is not None else -1)
-        else:
-            eventos.append(0)
-            sims.append(0.0)
-            cluster_ids.append(-1)
 
     df["sim_day"] = sims
     df["event_bin"] = eventos
-    df["cluster_id"] = cluster_ids
+    df["hist_count"] = hist_counts
+    df["r_lag1"] = df["r"].shift(1)
+    df["r_lag2"] = df["r"].shift(2)
+    df["Pred_Final"] = df["Base_Residual"].copy()
 
-    df["r_lag1"] = df["r"].shift(1)  # ontem
-    df["r_lag2"] = df["r"].shift(2)  # anteontem
+    feat_cols = ["r_lag1", "r_lag2", "sim_day", "event_bin", "hist_count"]
 
-    df["Pred_Final"] = df["Pred_Ajustado"].copy()
-
-    feat_cols = ["r_lag1", "r_lag2", "sim_day", "event_bin", "cluster_id"]
-
-    # WALK-FORWARD LOOP (causal)
     for t in range(janela, len(df)):
         train_df = df.iloc[:t].dropna(subset=feat_cols + ["r"])
         if len(train_df) < janela:
@@ -577,9 +382,8 @@ def aplicar_walkforward_residual(pred_df, motivos_por_data, emb_mgr_local, clust
 
         X = train_df[feat_cols].values
         y = train_df["r"].shift(-1).dropna().values
-
         if len(y) < len(X):
-            X = X[:len(y)]
+            X = X[: len(y)]
 
         model = Ridge(alpha=1.0)
         model.fit(X, y)
@@ -589,188 +393,140 @@ def aplicar_walkforward_residual(pred_df, motivos_por_data, emb_mgr_local, clust
             r_pred = float(model.predict(X_now)[0])
         except Exception:
             r_pred = 0.0
+        df.loc[t, "Pred_Final"] = df.loc[t, "Base_Residual"] + r_pred
 
-        df.loc[t, "Pred_Final"] = df.loc[t, "Pred_Final"] + r_pred
-
-    df = df.set_index("Date")
-    return df
+    return df.set_index("Date")
 
 
-# =====================================================================
-# UTIL - extrair ativo do nome (ex: "PETR4 (LSTM)" -> "PETR4")
-# =====================================================================
-def _ativo_from_nome(nome):
-    if not nome:
+def encontrar_scale_otimo(pred_df, motivos_por_data, biblioteca_eventos, ativo):
+    candidatos = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    melhor, menor = 0.4, float("inf")
+
+    for scale in candidatos:
+        temp = aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo=ativo, sim_threshold=0.7, max_horizon=4, scale=scale)
+        rmse = np.sqrt(mean_squared_error(temp["Real"], temp["Pred_Ajustado"]))
+        if rmse < menor:
+            menor = rmse
+            melhor = scale
+    return melhor
+
+
+def _rmse(real, pred):
+    return float(np.sqrt(mean_squared_error(real, pred)))
+
+
+def _save_decision_log(log_rows, ativo, tipo):
+    if not log_rows:
         return None
-    # tenta extrair token alfanumérico no começo (ex: PETR4)
-    m = re.match(r"^([A-Z0-9]+)", nome.upper().strip())
-    if m:
-        return m.group(1)
-    return nome.upper().split()[0]
+    out_path = LOG_DIR / f"decision_log_{ativo.lower()}_{tipo}.csv"
+    pd.DataFrame(log_rows).to_csv(out_path, index=False)
+    return out_path
 
 
-# =====================================================================
-# PIPELINE LSTM
-# =====================================================================
+def _save_prediction_details(ativo, tipo, pred_base, seq_only, residual_only, hybrid, motivos_por_data):
+    event_dates = {pd.to_datetime(data).normalize() for data in motivos_por_data.keys()}
+    index = hybrid.index
+    df = pd.DataFrame(
+        {
+            "Date": index,
+            "Ativo": ativo,
+            "Modelo": tipo.upper(),
+            "Real": hybrid["Real"].astype(float).values,
+            "Pred_Base": pred_base.reindex(index)["Pred"].astype(float).values,
+            "Pred_SeqOnly": seq_only.reindex(index)["Pred_Ajustado"].astype(float).values,
+            "Pred_ResidualOnly": residual_only.reindex(index)["Pred_Final"].astype(float).values,
+            "Pred_Hibrido": hybrid["Pred_Final"].astype(float).values,
+        }
+    )
+    df["ErroAbs_Base"] = (df["Real"] - df["Pred_Base"]).abs()
+    df["ErroAbs_Hibrido"] = (df["Real"] - df["Pred_Hibrido"]).abs()
+    df["Hybrid_Better"] = df["ErroAbs_Hibrido"] < df["ErroAbs_Base"]
+    df["Event_Day"] = df["Date"].apply(lambda data: pd.to_datetime(data).normalize() in event_dates)
+    df["Year"] = pd.to_datetime(df["Date"]).dt.year
+
+    out_path = LOG_DIR / f"prediction_details_{ativo.lower()}_{tipo}.csv"
+    df.to_csv(out_path, index=False)
+    return out_path
+
+
 def rodar_modelo_unificado(csv_path, model_path, out_html, nome, tipo):
-    """
-    tipo ∈ {"lstm", "autoencoder", "transformer"}
-    """
-
     print(f"\n=========== {nome} ({tipo.upper()}) ===========")
 
-    # ----------------------
-    # 1) Carregar dados
-    # ----------------------
+    ativo = _ativo_from_nome(nome)
     df = pd.read_csv(csv_path, parse_dates=["Date"]).sort_values("Date").ffill().bfill()
-
-    # ----------------------
-    # 2) Carregar modelo
-    # ----------------------
     model, scaler, cols, seq_len = carregar_modelo_unificado(model_path, tipo=tipo)
-
-    # ----------------------
-    # 3) Previsão base
-    # ----------------------
     pred_df = prever_unificado(model, scaler, df, seq_len, cols, tipo=tipo)
 
-    # ----------------------
-    # 4) Carregar clusters do ativo
-    # ----------------------
-    # usa a instância global emb_mgr
-    ativo = _ativo_from_nome(nome)
-    cluster_file = os.path.join(BASE_DIR, "data", f"cluster_{ativo.lower()}.csv")
+    motivos_por_data = extrair_motivos(OUTPUT_NOTICIAS_DIR)
+    biblioteca_eventos = carregar_biblioteca_eventos(OUTPUT_NOTICIAS_DIR)
 
-    if not os.path.exists(cluster_file):
-        print(f"⚠ Cluster específico não encontrado ({cluster_file}), usando cluster_motivos.csv")
-        cluster_file = os.path.join(BASE_DIR, "data", "cluster_motivos.csv")
+    decision_log = []
+    scale = encontrar_scale_otimo(pred_df, motivos_por_data, biblioteca_eventos, ativo)
 
-    clusters_df = pd.read_csv(cluster_file)
-    if "ativo_cluster" not in clusters_df.columns:
-        clusters_df["ativo_cluster"] = "GENÉRICO"
+    seq_only = aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo=ativo, scale=scale, decision_log=decision_log)
+    residual_only = aplicar_walkforward_residual(pred_df, motivos_por_data, biblioteca_eventos, ativo=ativo, janela=15, base_col="Pred", decision_log=decision_log)
+    hybrid = aplicar_walkforward_residual(seq_only, motivos_por_data, biblioteca_eventos, ativo=ativo, janela=15, base_col="Pred_Ajustado", decision_log=decision_log)
+    hybrid["Pred_Ajustado"] = hybrid["Pred_Final"]
+    hybrid["Pred_Final_Price"] = hybrid["Pred_Final"]
 
-    emb_repr = emb_mgr.embed_lote(clusters_df["frase_exemplo"].astype(str).tolist())
+    _save_decision_log(decision_log, ativo, tipo)
+    _save_prediction_details(ativo, tipo, pred_df, seq_only, residual_only, hybrid, motivos_por_data)
 
-    # ----------------------
-    # 5) Motivos da data
-    # ----------------------
-    motivos_por_data = extrair_motivos(os.path.join(BASE_DIR, "output_noticias"))
+    rmse_base = _rmse(pred_df["Real"], pred_df["Pred"])
+    rmse_seq = _rmse(seq_only["Real"], seq_only["Pred_Ajustado"])
+    rmse_residual = _rmse(residual_only["Real"], residual_only["Pred_Final"])
+    rmse_hib = _rmse(hybrid["Real"], hybrid["Pred_Final"])
 
-    # ----------------------
-    # 6) Otimizar SCALE
-    # ----------------------
-    scale = encontrar_scale_otimo(pred_df, motivos_por_data, emb_mgr, clusters_df, emb_repr, ativo)
-    pred_df = aplicar_seq_real(pred_df, motivos_por_data, emb_mgr, clusters_df, emb_repr,
-                               ativo=ativo, scale=scale)
+    PREVISOES_MODELOS[nome] = pred_df[["Pred", "Real"]].copy()
+    PREVISOES_HIBRIDOS[nome] = hybrid[["Pred_Ajustado", "Real"]].copy()
 
-    # ----------------------
-    # 7) WALK-FORWARD Residual Correction
-    # ----------------------
-    pred_df = aplicar_walkforward_residual(pred_df, motivos_por_data, emb_mgr, clusters_df, emb_repr,
-                                           ativo=ativo, janela=15)
+    clusters_df = pd.read_csv(DATA_DIR / "cluster_motivos.csv") if (DATA_DIR / "cluster_motivos.csv").exists() else pd.DataFrame(columns=["cluster", "frase_exemplo", "ativo_cluster"])
+    emb_repr = emb_mgr.embed_lote(clusters_df["frase_exemplo"].astype(str).tolist()) if not clusters_df.empty else np.zeros((0, 1536))
+    plotar_hibrido_corrigido(hybrid, motivos_por_data, emb_mgr, clusters_df, emb_repr, out_html, nome)
 
-    pred_df["Pred_Ajustado"] = pred_df["Pred_Final"]
-    pred_df["Pred_Final_Price"] = pred_df["Pred_Final"]
-
-    # ----------------------
-    # 8) Gráfico híbrido
-    # ----------------------
-    rmse_base, rmse_hib = plotar_hibrido_corrigido(
-        pred_df,
-        motivos_por_data,
-        emb_mgr,
-        clusters_df,
-        emb_repr,
-        out_html,
-        nome
+    RESULTADOS.append(
+        {
+            "Ativo": nome,
+            "Modelo": tipo.upper(),
+            "RMSE_Modelo": round(rmse_base, 4),
+            "RMSE_SeqOnly": round(rmse_seq, 4),
+            "RMSE_ResidualOnly": round(rmse_residual, 4),
+            "RMSE_Hibrido": round(rmse_hib, 4),
+            "Ganho_Hibrido": round(rmse_base - rmse_hib, 4),
+            "Scale_Selecionado": round(scale, 2),
+        }
     )
 
-    # ----------------------
-    # 9) Guardar previsões
-    # ----------------------
-    PREVISOES_MODELOS[nome] = pred_df[["Pred", "Real"]].copy()
-    PREVISOES_HIBRIDOS[nome] = pred_df[["Pred_Ajustado", "Real"]].copy()
 
-    # ----------------------
-    # 10) Resultados
-    # ----------------------
-    RESULTADOS.append({
-        "Ativo": nome,
-        "Modelo": tipo.upper(),
-        "RMSE_Modelo": round(rmse_base, 4),
-        "RMSE_Hibrido": round(rmse_hib, 4),
-        "Ganho": round(rmse_base - rmse_hib, 4)
-    })
-
-
-# =====================================================================
-# MAIN
-# =====================================================================
 def eval_modelos():
-
-    ativos = {
-        "PETR4": "petr4",
-        "PRIO3": "prio3",
-        "EXXO34": "exxo34"
+    ativos = {"PETR4": "petr4", "PRIO3": "prio3", "EXXO34": "exxo34"}
+    outs = {
+        "lstm": lambda a: IMG_DIR / f"previsao_lstm_{a}.html",
+        "autoencoder": lambda a: IMG_DIR / f"previsao_ae_{a}.html",
+        "transformer": lambda a: IMG_DIR / f"previsao_transformer_{a}.html",
     }
+    nome_format = {"lstm": "(LSTM)", "autoencoder": "(AE)", "transformer": "(Transformer)"}
 
-    # MAPEAMENTO DOS CAMINHOS HTML DE SAÍDA
-    OUTS = {
-        "lstm":       lambda a: os.path.join(BASE_DIR, "img", f"previsao_lstm_{a}.html"),
-        "autoencoder": lambda a: os.path.join(BASE_DIR, "img", f"previsao_ae_{a}.html"),
-        "transformer": lambda a: os.path.join(BASE_DIR, "img", f"previsao_transformer_{a}.html"),
-    }
-
-    # MAPEIA O PREFIXO DO NOME
-    NOME_FORMAT = {
-        "lstm":        "(LSTM)",
-        "autoencoder": "(AE)",
-        "transformer": "(Transformer)"
-    }
-
-    # ----------------------------------------
-    # 1) RODAR TODOS OS MODELOS POR ATIVO
-    # ----------------------------------------
     for tipo in ["lstm", "autoencoder", "transformer"]:
         for ativo, nomefile in ativos.items():
-
-            csv_path  = os.path.join(BASE_DIR, "data",    f"dados_{nomefile}_brent.csv")
-            model_path = os.path.join(BASE_DIR, "modelos", f"{tipo}_{nomefile}.pt")
-            out_html   = OUTS[tipo](nomefile)
-
             rodar_modelo_unificado(
-                csv_path,
-                model_path,
-                out_html,
-                f"{ativo} {NOME_FORMAT[tipo]}",
-                tipo=tipo
+                str(DATA_DIR / f"dados_{nomefile}_brent.csv"),
+                str(MODELOS_DIR / f"{tipo}_{nomefile}.pt"),
+                str(outs[tipo](nomefile)),
+                f"{ativo} {nome_format[tipo]}",
+                tipo=tipo,
             )
 
-    # =====================================================
-    # 2) Preparar dados para os gráficos por ativo
-    # =====================================================
-    motivos_por_data = extrair_motivos(os.path.join(BASE_DIR, "output_noticias"))
-    # usa a instância global emb_mgr
-    clusters_df = pd.read_csv(CLUSTER_CSV)
-    if "ativo_cluster" not in clusters_df.columns:
-        clusters_df["ativo_cluster"] = "GENÉRICO"
-    emb_repr = emb_mgr.embed_lote(clusters_df["frase_exemplo"].astype(str).tolist())
-
-    # =====================================================
-    # 3) Gerar gráficos consolidados por ativo
-    # =====================================================
+    motivos_por_data = extrair_motivos(OUTPUT_NOTICIAS_DIR)
+    clusters_df = pd.read_csv(DATA_DIR / "cluster_motivos.csv") if (DATA_DIR / "cluster_motivos.csv").exists() else pd.DataFrame(columns=["cluster", "frase_exemplo"])
+    emb_repr = emb_mgr.embed_lote(clusters_df["frase_exemplo"].astype(str).tolist()) if not clusters_df.empty else np.zeros((0, 1536))
 
     for ativo in ["PETR4", "PRIO3", "EXXO34"]:
-
-        prev_puro  = {k: v for k, v in PREVISOES_MODELOS.items()  if k.startswith(ativo)}
-        prev_hib   = {k: v for k, v in PREVISOES_HIBRIDOS.items() if k.startswith(ativo)}
-
-        if len(prev_puro) == 0:
-            print(f"⚠ Nenhuma previsão pura encontrada para {ativo}, pulando.")
+        prev_puro = {k: v for k, v in PREVISOES_MODELOS.items() if k.startswith(ativo)}
+        prev_hib = {k: v for k, v in PREVISOES_HIBRIDOS.items() if k.startswith(ativo)}
+        if not prev_puro:
             continue
-
         df_base = list(prev_puro.values())[0]
-
         plotar_comparacao_por_ativo(
             df_base,
             prev_puro,
@@ -779,18 +535,15 @@ def eval_modelos():
             emb_mgr,
             clusters_df,
             emb_repr,
-            os.path.join(BASE_DIR, "img", f"comparacao_{ativo.lower()}.html"),
-            ativo
+            str(IMG_DIR / f"comparacao_{ativo.lower()}.html"),
+            ativo,
         )
 
-    # =====================================================
-    # 4) SALVAR RESULTADOS
-    # =====================================================
-    print("\n========================== RESULTADO FINAL ==========================\n")
     df_final = pd.DataFrame(RESULTADOS)
     print(df_final.to_string(index=False))
-    df_final.to_csv(os.path.join(BASE_DIR, "data", "resultado_comparacao_modelos.csv"), index=False)
-    print("\n✔ Tabela salva com sucesso!\n")
+    df_final.to_csv(DATA_DIR / "resultado_comparacao_modelos.csv", index=False)
+    df_final.to_csv(DATA_DIR / "resultado_ablation_modelos.csv", index=False)
+
 
 if __name__ == "__main__":
     eval_modelos()

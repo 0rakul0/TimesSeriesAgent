@@ -1,0 +1,2 @@
+Ativo,Modelo,MAE_Base,MAE_Hibrido,Directional_Accuracy_Base,Directional_Accuracy_Hibrido,Pct_Dias_Hibrido_Melhor
+PETR4,LSTM,0.44999999999999973,0.1499999999999999,0.6666666666666666,1.0,1.0

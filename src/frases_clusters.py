@@ -1,99 +1,79 @@
-# frases_clusters.py — CLUSTERIZAÇÃO HÍBRIDA COM FRASE CANÔNICA (VERSÃO FINAL CACHEADA)
-
-import os
 import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from glob import glob
-from sklearn.cluster import AgglomerativeClustering
 from dotenv import load_dotenv
+from openai import OpenAI
+from sklearn.cluster import AgglomerativeClustering
 
-# ============================
-# IMPORTANTE: EmbeddingManager com CACHE
-# ============================
 from utils.embedding_manager import EmbeddingManager
+from utils.project_paths import DATA_DIR, OUTPUT_NOTICIAS_DIR
 
 load_dotenv()
-emb_mgr = EmbeddingManager()
 
-# ============================
-# CONFIG
-# ============================
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EVENTS_DIR = os.path.join(BASE_DIR, "output_noticias")
-OUT_DIR = os.path.join(BASE_DIR, "data")
-OUT_CSV = os.path.join(OUT_DIR, "cluster_motivos.csv")
-
+PROMPT_VERSION = "news-cluster-v1"
 N_CLUSTERS_POR_ATIVO = 50
 MIN_MOTIVOS_POR_ATIVO = 100
 TOP_CENTER = 50
 RANDOM_SEED = 42
 
 np.random.seed(RANDOM_SEED)
+emb_mgr = EmbeddingManager()
+_openai_client = None
 
-# ============================
-# EMBEDDING (usando cache!)
-# ============================
+
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI()
+    return _openai_client
+
+
 def embed_text(texto: str):
-    """
-    Usa EmbeddingManager → garante:
-      - cache local persistente
-      - sem chamadas repetidas à API
-      - consistência com MVP e modelo híbrido
-    Retorna vetor shape (1536,)
-    """
     try:
-        emb = emb_mgr.embed(texto)
-        return emb.reshape(-1)  # torna 1D
-    except Exception as e:
-        print("⚠ Erro ao gerar embedding:", e)
+        return np.asarray(emb_mgr.embed(texto)).reshape(-1)
+    except Exception as exc:
+        print("[WARN] Erro ao gerar embedding:", exc)
         return np.zeros((1536,), dtype=float)
 
-# ============================
-# Oversample de frases (permanece igual)
-# ============================
-def gerar_variacoes_via_openai(frase, n=5):
-    from openai import OpenAI
-    client = OpenAI()
 
+def gerar_variacoes_via_openai(frase, n=5):
     prompt = f"""
-Gere {n} variações naturais da frase abaixo, mantendo o mesmo significado.
-Retorne APENAS uma lista JSON de strings.
+Gere {n} variacoes naturais da frase abaixo, mantendo o mesmo significado.
+Retorne apenas uma lista JSON de strings.
 
 Frase original:
 "{frase}"
 """
 
     try:
-        resp = client.chat.completions.create(
+        resp = get_openai_client().chat.completions.create(
             model="gpt-4.1",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4,
             max_tokens=200,
         )
-        txt = resp.choices[0].message.content
+        txt = resp.choices[0].message.content or ""
 
-        import re, ast
-        m = re.search(r"\[.*\]", txt, flags=re.S)
-        if m:
-            return ast.literal_eval(m.group(0))
+        import ast
+        import re
 
-    except Exception as e:
-        print("⚠ Erro variações:", e)
+        match = re.search(r"\[.*\]", txt, flags=re.S)
+        if match:
+            return ast.literal_eval(match.group(0))
+    except Exception as exc:
+        print("[WARN] Erro variacoes:", exc)
 
     return [frase]
 
-# ============================
-# FRASE CANÔNICA DO CLUSTER
-# ============================
+
 def gerar_frase_canonica_cluster(frases_cluster, ativo):
-    frases_cluster = [f.strip() for f in frases_cluster if isinstance(f, str) and f.strip()]
+    frases_cluster = [frase.strip() for frase in frases_cluster if isinstance(frase, str) and frase.strip()]
     if not frases_cluster:
         return "Evento relevante no mercado."
 
-    # 1) embeddings (cacheado)
-    embeds = np.vstack([embed_text(f) for f in frases_cluster])
+    embeds = np.vstack([embed_text(frase) for frase in frases_cluster])
     centroide = embeds.mean(axis=0)
 
     sims = []
@@ -101,196 +81,184 @@ def gerar_frase_canonica_cluster(frases_cluster, ativo):
         sim = float(emb @ centroide / (np.linalg.norm(emb) * np.linalg.norm(centroide) + 1e-12))
         sims.append((sim, frase))
 
-    frases_centrais = [s[1] for s in sorted(sims, key=lambda x: x[0], reverse=True)[:TOP_CENTER]]
-    frases_txt = "\n".join(f"- {f}" for f in frases_centrais)
-
-    # 2) gerar resumo canônico via LLM
-    from openai import OpenAI
-    client = OpenAI()
+    frases_centrais = [item[1] for item in sorted(sims, key=lambda x: x[0], reverse=True)[:TOP_CENTER]]
+    frases_txt = "\n".join(f"- {frase}" for frase in frases_centrais)
 
     prompt = f"""
-Você é um analista financeiro em 2025.
+Voce e um analista financeiro em 2025.
+As frases abaixo representam o nucleo semantico de um cluster do ativo {ativo}.
+Resuma o conceito central em uma frase curta, objetiva e atemporal.
 
-As frases abaixo representam o núcleo semântico deste cluster.
-Resuma o conceito central em UMA frase curta, objetiva e atemporal.
-
-NÃO invente novos temas.
-Use somente o que está implícito nas frases.
-Mantenha o foco econômico e de mercado.
+Nao invente novos temas.
+Use somente o que esta implicito nas frases.
 
 Frases principais:
 {frases_txt}
 
-Retorne APENAS a frase final.
+Retorne apenas a frase final.
 """
 
     try:
-        resp = client.chat.completions.create(
+        resp = get_openai_client().chat.completions.create(
             model="gpt-4.1",
             temperature=0.2,
             max_tokens=80,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
         )
-        frase_llm = resp.choices[0].message.content.strip()
-    except:
+        frase_llm = (resp.choices[0].message.content or "").strip()
+    except Exception:
         frase_llm = frases_centrais[0]
 
-    # 3) validação semântica
     emb_canon = embed_text(frase_llm)
-    sim_canon = float(
-        emb_canon @ centroide / (np.linalg.norm(emb_canon) * np.linalg.norm(centroide) + 1e-12)
-    )
+    sim_canon = float(emb_canon @ centroide / (np.linalg.norm(emb_canon) * np.linalg.norm(centroide) + 1e-12))
+    return frase_llm if sim_canon >= 0.70 else frases_centrais[0]
 
-    if sim_canon < 0.70:
-        return frases_centrais[0]
 
-    return frase_llm
-
-# ============================
-# Carregar eventos JSON
-# ============================
 def carregar_eventos():
-    arquivos = sorted(glob(os.path.join(EVENTS_DIR, "evento_*.json")))
+    motivos, seqs, sentimentos, ativos, datas = [], [], [], [], []
 
-    motivos, seqs, sentimentos, ativos = [], [], [], []
-
-    for p in arquivos:
+    for arquivo in sorted(OUTPUT_NOTICIAS_DIR.glob("evento_*.json")):
         try:
-            j = json.load(open(p, "r", encoding="utf-8"))
-        except:
+            with arquivo.open("r", encoding="utf-8") as handle:
+                registro = json.load(handle)
+        except Exception:
             continue
 
-        ativo = str(j.get("ativo", "GENÉRICO")).upper()
-        seq = j.get("seq", {}).get(ativo, [])
+        ativo = str(registro.get("ativo", "GENERICO")).upper()
+        seq = (registro.get("seq", {}) or {}).get(ativo, [])
+        frases = registro.get("motivos_identificados", []) or []
+        sentimento = registro.get("sentimento_do_mercado", "neutro")
+        data = pd.to_datetime(registro.get("data")).normalize()
 
-        frases = j.get("motivos_identificados", []) or []
-        sent = j.get("sentimento_do_mercado", "neutro")
-
-        for f in frases:
-            f = f.strip()
-            if f:
-                motivos.append(f)
+        for frase in frases:
+            frase = frase.strip()
+            if frase:
+                motivos.append(frase)
                 seqs.append(seq)
-                sentimentos.append(sent)
+                sentimentos.append(sentimento)
                 ativos.append(ativo)
+                datas.append(data)
 
-    return motivos, seqs, sentimentos, ativos
+    return motivos, seqs, sentimentos, ativos, datas
 
-# ============================
-# Oversample por ativo
-# ============================
-def oversample_motivos_por_ativo(motivos, seqs, sentimentos, ativos):
-    df = pd.DataFrame({"motivo": motivos, "seq": seqs, "sentimento": sentimentos, "ativo": ativos})
 
-    out_motivos, out_seqs, out_sent, out_ativos = [], [], [], []
+def oversample_motivos_por_ativo(motivos, seqs, sentimentos, ativos, datas):
+    df = pd.DataFrame(
+        {
+            "motivo": motivos,
+            "seq": seqs,
+            "sentimento": sentimentos,
+            "ativo": ativos,
+            "data_evento": datas,
+        }
+    )
 
-    for ativo, g in df.groupby("ativo"):
-        frases = g["motivo"].unique().tolist()
+    out_motivos, out_seqs, out_sent, out_ativos, out_datas = [], [], [], [], []
 
-        # base
-        out_motivos.extend(frases)
-        out_seqs.extend([g[g["motivo"] == f]["seq"].iloc[0] for f in frases])
-        out_sent.extend([g[g["motivo"] == f]["sentimento"].iloc[0] for f in frases])
-        out_ativos.extend([ativo] * len(frases))
+    for ativo, grupo in df.groupby("ativo"):
+        frases = grupo["motivo"].unique().tolist()
 
-        # oversample (gera variações reais)
+        for frase in frases:
+            linha = grupo[grupo["motivo"] == frase].iloc[0]
+            out_motivos.append(frase)
+            out_seqs.append(linha["seq"])
+            out_sent.append(linha["sentimento"])
+            out_ativos.append(ativo)
+            out_datas.append(linha["data_evento"])
+
         if len(frases) < MIN_MOTIVOS_POR_ATIVO:
             need = MIN_MOTIVOS_POR_ATIVO - len(frases)
-            per_frase = max(1, int(np.ceil(need / len(frases))))
+            per_frase = max(1, int(np.ceil(need / max(len(frases), 1))))
 
-            print(f"[OVERSAMPLE] ativo={ativo} → {need} novas frases")
-
-            for f in frases:
-                novas = gerar_variacoes_via_openai(f, n=per_frase)
-                for v in novas:
-                    out_motivos.append(v)
-                    out_seqs.append(g[g["motivo"] == f]["seq"].iloc[0])
-                    out_sent.append(g[g["motivo"] == f]["sentimento"].iloc[0])
+            print(f"[OVERSAMPLE] ativo={ativo} -> {need} novas frases")
+            for frase in frases:
+                linha = grupo[grupo["motivo"] == frase].iloc[0]
+                for variacao in gerar_variacoes_via_openai(frase, n=per_frase):
+                    out_motivos.append(variacao)
+                    out_seqs.append(linha["seq"])
+                    out_sent.append(linha["sentimento"])
                     out_ativos.append(ativo)
+                    out_datas.append(linha["data_evento"])
 
-    return out_motivos, out_seqs, out_sent, out_ativos
+    return out_motivos, out_seqs, out_sent, out_ativos, out_datas
 
-# ============================
-# Clusterização final
-# ============================
-def clusterizar_por_ativo(motivos, seqs, sentimentos, ativos):
-    df = pd.DataFrame({"motivo": motivos, "seq": seqs, "sentimento": sentimentos, "ativo": ativos})
+
+def clusterizar_por_ativo(motivos, seqs, sentimentos, ativos, datas):
+    df = pd.DataFrame(
+        {
+            "motivo": motivos,
+            "seq": seqs,
+            "sentimento": sentimentos,
+            "ativo": ativos,
+            "data_evento": datas,
+        }
+    )
 
     resultados = []
 
-    for ativo, g in df.groupby("ativo"):
-        frases = g["motivo"].tolist()
+    for ativo, grupo in df.groupby("ativo"):
+        frases = grupo["motivo"].tolist()
         if not frases:
             continue
 
         print(f"[CLUSTER] ativo={ativo} | motivos={len(frases)}")
-
-        # Embeddings consistentes e cacheados
-        embeds = np.vstack([embed_text(f) for f in frases])
-
-        # numero de clusters
+        embeds = np.vstack([embed_text(frase) for frase in frases])
         k = min(N_CLUSTERS_POR_ATIVO, max(1, len(frases) // 2))
 
-        cluster = AgglomerativeClustering(
-            n_clusters=k,
-            metric="cosine",
-            linkage="average"
-        )
+        cluster = AgglomerativeClustering(n_clusters=k, metric="cosine", linkage="average")
         labels = cluster.fit_predict(embeds)
+        grupo = grupo.copy()
+        grupo["cluster"] = labels
 
-        g["cluster"] = labels
-
-        # gerar clusters finais
-        for c in sorted(g["cluster"].unique()):
-            grp = g[g["cluster"] == c]
-            frases_cluster = grp["motivo"].tolist()
-
+        for cluster_id in sorted(grupo["cluster"].unique()):
+            subset = grupo[grupo["cluster"] == cluster_id].copy()
+            frases_cluster = subset["motivo"].tolist()
             frase_canon = gerar_frase_canonica_cluster(frases_cluster, ativo)
 
-            seqs_raw = grp["seq"].tolist()
-            max_len = max((len(s) if isinstance(s, list) else 0) for s in seqs_raw)
-
+            seqs_raw = subset["seq"].tolist()
+            max_len = max((len(seq) if isinstance(seq, list) else 0) for seq in seqs_raw)
             seq_avg = []
             for i in range(max_len):
-                vals = [s[i] for s in seqs_raw if isinstance(s, list) and len(s) > i and s[i] is not None]
-                seq_avg.append(np.mean(vals) if vals else None)
+                valores = [seq[i] for seq in seqs_raw if isinstance(seq, list) and len(seq) > i and seq[i] is not None]
+                seq_avg.append(float(np.mean(valores)) if valores else None)
 
-            resultados.append({
-                "cluster": int(c),
-                "frase_exemplo": frase_canon,
-                "ativo_cluster": ativo,
-                "n_eventos": len(grp),
-                "frases_originais": frases_cluster,
-                **{f"seq_d{i}": seq_avg[i] for i in range(len(seq_avg))}
-            })
+            datas_cluster = sorted(pd.to_datetime(subset["data_evento"]).dt.strftime("%Y-%m-%d").tolist())
+            resultados.append(
+                {
+                    "cluster": int(cluster_id),
+                    "frase_exemplo": frase_canon,
+                    "ativo_cluster": ativo,
+                    "n_eventos": int(len(subset)),
+                    "n_motivos_unicos": int(subset["motivo"].nunique()),
+                    "prompt_version": PROMPT_VERSION,
+                    "first_event_date": datas_cluster[0] if datas_cluster else None,
+                    "last_event_date": datas_cluster[-1] if datas_cluster else None,
+                    "event_dates": json.dumps(datas_cluster, ensure_ascii=False),
+                    "frases_originais": json.dumps(frases_cluster, ensure_ascii=False),
+                    **{f"seq_d{i}": seq_avg[i] for i in range(len(seq_avg))},
+                }
+            )
 
-        # salvar CSV por ativo
-        df_ativo = pd.DataFrame([r for r in resultados if r["ativo_cluster"] == ativo])
-        df_ativo.to_csv(os.path.join(OUT_DIR, f"cluster_{ativo.lower()}.csv"), index=False)
-        print(" → salvo cluster_", ativo.lower())
+        df_ativo = pd.DataFrame([row for row in resultados if row["ativo_cluster"] == ativo])
+        df_ativo.to_csv(DATA_DIR / f"cluster_{ativo.lower()}.csv", index=False)
+        print(f"[OK] salvo cluster_{ativo.lower()}.csv")
 
-    # salvar CSV combinado
-    pd.DataFrame(resultados).to_csv(OUT_CSV, index=False)
-    print("Clusters combinados salvos em:", OUT_CSV)
-
-    return pd.DataFrame(resultados)
+    df_final = pd.DataFrame(resultados)
+    df_final.to_csv(DATA_DIR / "cluster_motivos.csv", index=False)
+    print("[OK] Clusters combinados salvos em:", DATA_DIR / "cluster_motivos.csv")
+    return df_final
 
 
-# ============================
-# MAIN
-# ============================
 def gerar_cluster_motivos():
-    print("Carregando eventos…")
-    motivos, seqs, sentimentos, ativos = carregar_eventos()
+    print("Carregando eventos...")
+    motivos, seqs, sentimentos, ativos, datas = carregar_eventos()
     print(f"{len(motivos)} motivos carregados")
 
-    print("Oversample…")
-    motivos2, seqs2, sent2, ativos2 = oversample_motivos_por_ativo(
-        motivos, seqs, sentimentos, ativos
-    )
+    print("Oversample...")
+    motivos2, seqs2, sent2, ativos2, datas2 = oversample_motivos_por_ativo(motivos, seqs, sentimentos, ativos, datas)
 
-    print("Clusterizando…")
-    df_final = clusterizar_por_ativo(motivos2, seqs2, sent2, ativos2)
+    print("Clusterizando...")
+    df_final = clusterizar_por_ativo(motivos2, seqs2, sent2, ativos2, datas2)
 
     print("Finalizado.")
     return df_final

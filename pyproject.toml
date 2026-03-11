@@ -1,17 +1,33 @@
 [project]
 name = "timesseriesagent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Pipeline hibrido para previsao de series temporais financeiras com sinais de noticias."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "langchain>=1.0.0",
-    "langgraph>=1.0.0",
+    "fastapi>=0.116.1",
     "matplotlib>=3.10.7",
-    "ollama>=0.6.0",
+    "numpy>=2.3.3",
+    "openai>=2.6.1",
     "pandas>=2.3.3",
+    "plotly>=6.3.1",
+    "pydantic>=2.12.0",
+    "python-dotenv>=1.1.1",
+    "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
     "statsmodels>=0.14.5",
+    "stumpy>=1.13.0",
+    "tavily-python>=0.7.12",
     "torch>=2.9.0",
+    "tqdm>=4.67.1",
+    "uvicorn>=0.35.0",
     "yfinance>=0.2.66",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

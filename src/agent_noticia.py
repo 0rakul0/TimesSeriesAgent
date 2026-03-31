@@ -96,8 +96,9 @@ def escolher_motivo_principal(motivos: List[str]) -> List[str]:
         return motivos
 
     prompt = f"""
-Dentre os motivos abaixo, escolha apenas aquele que representa a causa principal
-do movimento do ativo no mercado. Responda somente com o texto exato do motivo.
+Dentre os motivos abaixo, escolha apenas aquele que melhor representa o motivo
+explicativo principal identificado para o movimento do ativo no mercado.
+Responda somente com o texto exato do motivo.
 
 MOTIVOS:
 {json.dumps(motivos, ensure_ascii=False, indent=2)}
@@ -142,8 +143,9 @@ def coletar_noticias_tavily(ativo: str, data_iso: str):
 
 def consultar_chatgpt_evento(ativo: str, data_iso: str, retorno: float, fechamento: float):
     prompt = f"""
-Explique o que ocorreu com o ativo {ativo} no dia {data_iso}.
-Use apenas fatos reais. Se nao houver evento relevante, diga claramente.
+Descreva o principal evento ou contexto publicamente observavel para o ativo {ativo}
+no dia {data_iso}. Use apenas fatos reais. Se nao houver evento relevante,
+diga claramente.
 
 Retorne somente JSON:
 
@@ -181,7 +183,7 @@ def consultar_evento_hibrido(ativo, data_iso, retorno, fechamento):
     if evento.o_que_houve and not _sem_evento_relevante(evento.o_que_houve):
         return evento
 
-    print("[INFO] GPT nao encontrou evento claro; usando Tavily.")
+    print("[INFO] GPT nao encontrou contexto suficiente; usando Tavily.")
 
     try:
         texto, fontes = coletar_noticias_tavily(ativo, data_iso)
@@ -194,8 +196,8 @@ def consultar_evento_hibrido(ativo, data_iso, retorno, fechamento):
 
     empresa = EMPRESAS.get(ativo, ativo)
     prompt = f"""
-Explique o que ocorreu com o ativo {ativo} ({empresa}) no dia {data_iso}
-usando exclusivamente as noticias abaixo.
+Descreva o principal evento ou contexto observavel para o ativo {ativo} ({empresa})
+no dia {data_iso}, usando exclusivamente as noticias abaixo.
 
 Retorne somente JSON.
 

@@ -211,7 +211,7 @@ def juntar_e_correlacionar_lado_a_lado(caminhos_fonte, salvar):
 
     for ticker, caminho in caminhos_fonte.items():
 
-        df = pd.read_csv(f"../data/{caminho}", parse_dates=True, index_col=0)
+        df = pd.read_csv(f"{caminho}", parse_dates=True, index_col=0)
 
         df.index = pd.to_datetime(df.index, utc=True)
         df.index = df.index.tz_convert(None).date

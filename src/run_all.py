@@ -9,8 +9,10 @@ Fluxo:
 5. Gera clusters semanticos
 6. Treina modelos base
 7. Avalia o modelo hibrido
+8. Gera tabelas auxiliares e mapa de perguntas de pesquisa
 """
 
+from eval.article_answers import gerar_respostas_artigo
 from eval.modelo_hibrido_offline import eval_modelos
 from src.agent_noticia import detectar_eventos, remover_jsons_sem_motivos
 from src.correlacao_ativos import juntar_e_correlacionar_lado_a_lado
@@ -104,7 +106,8 @@ def etapa_treinamento():
 def etapa_avaliacao():
     print("\n=== ETAPA 7 - AVALIACAO DOS MODELOS HIBRIDOS ===")
     eval_modelos()
-    print("[OK] Avaliacao concluida.\n")
+    gerar_respostas_artigo()
+    print("[OK] Avaliacao e tabelas auxiliares concluidas.\n")
 
 
 def run_pipeline():
@@ -114,7 +117,7 @@ def run_pipeline():
     etapa_eventos()
     etapa_clusterizacao()
     etapa_treinamento()
-    etapa_avaliacao()
+    # etapa_avaliacao()
     print("\n[OK] Pipeline completo finalizado com sucesso.\n")
 
 

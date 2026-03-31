@@ -68,7 +68,7 @@ Frase original:
     return [frase]
 
 
-def gerar_frase_canonica_cluster(frases_cluster, ativo):
+def gerar_frase_representativa_cluster(frases_cluster, ativo):
     frases_cluster = [frase.strip() for frase in frases_cluster if isinstance(frase, str) and frase.strip()]
     if not frases_cluster:
         return "Evento relevante no mercado."
@@ -213,7 +213,7 @@ def clusterizar_por_ativo(motivos, seqs, sentimentos, ativos, datas):
         for cluster_id in sorted(grupo["cluster"].unique()):
             subset = grupo[grupo["cluster"] == cluster_id].copy()
             frases_cluster = subset["motivo"].tolist()
-            frase_canon = gerar_frase_canonica_cluster(frases_cluster, ativo)
+            frase_representativa = gerar_frase_representativa_cluster(frases_cluster, ativo)
 
             seqs_raw = subset["seq"].tolist()
             max_len = max((len(seq) if isinstance(seq, list) else 0) for seq in seqs_raw)
@@ -226,7 +226,7 @@ def clusterizar_por_ativo(motivos, seqs, sentimentos, ativos, datas):
             resultados.append(
                 {
                     "cluster": int(cluster_id),
-                    "frase_exemplo": frase_canon,
+                    "frase_exemplo": frase_representativa,
                     "ativo_cluster": ativo,
                     "n_eventos": int(len(subset)),
                     "n_motivos_unicos": int(subset["motivo"].nunique()),

@@ -97,12 +97,13 @@ def test_threshold_sensitivity_table_counts_asset_events(tmp_path):
     assert list(tabela["Qtd_Eventos_Considerados"]) == [4, 3, 2]
 
 
-def test_article_answers_generates_expected_columns():
+def test_article_answers_generates_expected_columns(tmp_path):
     import pandas as pd
 
     from eval.article_answers import (
         gerar_casos_piora,
         gerar_eventos_vs_nao_eventos,
+        gerar_mapa_perguntas_pesquisa,
         gerar_metricas_complementares,
         gerar_robustez_anual,
     )
@@ -123,13 +124,16 @@ def test_article_answers_generates_expected_columns():
     df["ErroAbs_Base"] = (df["Real"] - df["Pred_Base"]).abs()
     df["ErroAbs_Hibrido"] = (df["Real"] - df["Pred_Hibrido"]).abs()
 
-    metricas = gerar_metricas_complementares(df)
-    eventos = gerar_eventos_vs_nao_eventos(df)
-    robustez = gerar_robustez_anual(df)
-    piora_resumo, piora_detalhes = gerar_casos_piora(df)
+    metricas = gerar_metricas_complementares(df, output_dir=tmp_path)
+    eventos = gerar_eventos_vs_nao_eventos(df, output_dir=tmp_path)
+    robustez = gerar_robustez_anual(df, output_dir=tmp_path)
+    piora_resumo, piora_detalhes = gerar_casos_piora(df, output_dir=tmp_path)
+    mapa = gerar_mapa_perguntas_pesquisa(tmp_path / "perguntas_pesquisa.md")
 
     assert "MAE_Hibrido" in metricas.columns
     assert "Pct_Dias_Hibrido_Melhor" in eventos.columns
     assert "Ano" in robustez.columns
     assert "Qtd_Dias_Piora" in piora_resumo.columns
     assert isinstance(piora_detalhes, pd.DataFrame)
+    assert mapa.exists()
+    assert "RQ1" in mapa.read_text(encoding="utf-8")

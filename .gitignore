@@ -18,3 +18,5 @@ modelos/*.pt
 
 *.log
 *.pyc
+/src/__pycache__
+*.pyc

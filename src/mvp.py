@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import torch
 
 from eval.modelo_hibrido_offline import (
+    RERANK_CONFIG_BY_MODEL,
     carregar_modelo_unificado,
     motivo_e_cluster_mais_relevante,
 )
@@ -159,15 +160,19 @@ def prever_proximos_3(model_path, csv_path, modelo_tipo):
     return preds, df_pred_full, last_hist_pred
 
 
-def obter_cluster_de_motivo(motivos, ativo="PETR4"):
+def obter_cluster_de_motivo(motivos, ativo="PETR4", modelo_tipo=None):
     clusters_df = pd.read_csv(CLUSTER_CSV)
     emb_repr = emb_mgr.embed_lote(clusters_df["frase_exemplo"].astype(str).tolist())
+    rerank_config = None
+    if modelo_tipo:
+        rerank_config = RERANK_CONFIG_BY_MODEL.get(str(modelo_tipo).lower(), RERANK_CONFIG_BY_MODEL["default"])
     motivo, sim, cluster_id, row = motivo_e_cluster_mais_relevante(
         motivos,
         emb_mgr,
         emb_repr,
         clusters_df,
         ativo,
+        rerank_config=rerank_config,
     )
     if row is None:
         row = pd.Series(dtype=object)
@@ -291,7 +296,7 @@ def executar_demo(retornar_html=False, ativo="PETR4", csv_path=None, show_plot=T
     print("Previsao base (D+1..D+3):", preds)
 
     motivos = motivos or ["crise politica no pais"]
-    motivo_sel, sim, cluster_id, row = obter_cluster_de_motivo(motivos, ativo)
+    motivo_sel, sim, cluster_id, row = obter_cluster_de_motivo(motivos, ativo, modelo_tipo=modelo_tipo)
     preds_adj, impactos = ajustar_previsao_com_impacto(preds, row, sim, scale=0.4)
 
     print("Motivo selecionado:", motivo_sel)

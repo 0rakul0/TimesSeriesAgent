@@ -15,6 +15,7 @@ from modelos.model_lstm_autoencoder import LSTMAutoencoderPrice
 from modelos.model_transformer_price import TransformerPrice
 from utils.embedding_manager import EmbeddingManager
 from utils.project_paths import DATA_DIR, IMG_DIR, MODELOS_DIR, OUTPUT_NOTICIAS_DIR, ensure_runtime_dirs
+from utils.rerank_utils import hybrid_rerank_scores, parse_jsonish_list, select_semantic_pool
 
 ensure_runtime_dirs()
 
@@ -27,6 +28,49 @@ emb_mgr = EmbeddingManager()
 RESULTADOS = []
 PREVISOES_MODELOS = {}
 PREVISOES_HIBRIDOS = {}
+
+RERANK_CONFIG_BY_MODEL = {
+    "lstm": {
+        "enabled": True,
+        "pool_size": 12,
+        "semantic_margin": 0.05,
+        "semantic_weight": 0.90,
+        "lexical_weight": 0.07,
+        "recency_weight": 0.03,
+    },
+    "autoencoder": {
+        "enabled": True,
+        "pool_size": 12,
+        "semantic_margin": 0.05,
+        "semantic_weight": 0.91,
+        "lexical_weight": 0.06,
+        "recency_weight": 0.03,
+    },
+    "transformer": {
+        "enabled": True,
+        "pool_size": 15,
+        "semantic_margin": 0.07,
+        "semantic_weight": 0.84,
+        "lexical_weight": 0.12,
+        "recency_weight": 0.04,
+    },
+    "default": {
+        "enabled": True,
+        "pool_size": 10,
+        "semantic_margin": 0.06,
+        "semantic_weight": 0.90,
+        "lexical_weight": 0.07,
+        "recency_weight": 0.03,
+    },
+    "semantic_only": {
+        "enabled": False,
+        "pool_size": 10,
+        "semantic_margin": 0.00,
+        "semantic_weight": 1.0,
+        "lexical_weight": 0.0,
+        "recency_weight": 0.0,
+    },
+}
 
 
 def carregar_modelo_unificado(model_path, tipo="lstm"):
@@ -184,7 +228,14 @@ def _similaridade_coseno(vetor, matriz):
     return (num / den).flatten()
 
 
-def recuperar_impacto_historico(motivos, cutoff_date, biblioteca_eventos, ativo, top_k=5, sim_threshold=0.70):
+def _resolve_rerank_config(rerank_config=None, model_type=None):
+    if rerank_config is not None:
+        return rerank_config
+    key = (model_type or "default").lower()
+    return RERANK_CONFIG_BY_MODEL.get(key, RERANK_CONFIG_BY_MODEL["default"])
+
+
+def recuperar_impacto_historico(motivos, cutoff_date, biblioteca_eventos, ativo, top_k=5, sim_threshold=0.70, rerank_config=None):
     if not motivos:
         return None
 
@@ -214,16 +265,44 @@ def recuperar_impacto_historico(motivos, cutoff_date, biblioteca_eventos, ativo,
     if candidatos_df.empty:
         return None
 
-    candidatos_df = candidatos_df.sort_values(["sim", "date"], ascending=[False, False]).head(top_k).reset_index(drop=True)
+    config = _resolve_rerank_config(rerank_config)
+    candidatos_df = candidatos_df.sort_values(["sim", "date"], ascending=[False, False]).reset_index(drop=True)
+    if config.get("enabled", True):
+        query_text = " ".join(str(motivo).strip() for motivo in motivos if str(motivo).strip())
+        candidate_texts = candidatos_df["motivo"].astype(str).tolist()
+        pool_idx = select_semantic_pool(
+            semantic_scores=candidatos_df["sim"].astype(float).tolist(),
+            top_k=top_k,
+            pool_size=int(config.get("pool_size", max(top_k * 2, 10))),
+            semantic_margin=float(config.get("semantic_margin", 0.06)),
+        )
+        pool_df = candidatos_df.iloc[pool_idx].copy().reset_index(drop=True)
+        rerank_scores = hybrid_rerank_scores(
+            query=query_text,
+            texts=pool_df["motivo"].astype(str).tolist(),
+            semantic_scores=pool_df["sim"].astype(float).tolist(),
+            dates=pool_df["date"].tolist(),
+            semantic_weight=float(config.get("semantic_weight", 0.9)),
+            lexical_weight=float(config.get("lexical_weight", 0.07)),
+            recency_weight=float(config.get("recency_weight", 0.03)),
+        )
+        pool_df["rerank_score"] = rerank_scores
+        candidatos_df = pool_df.sort_values(["rerank_score", "sim", "date"], ascending=[False, False, False]).head(top_k).reset_index(drop=True)
+    else:
+        candidatos_df["rerank_score"] = candidatos_df["sim"].astype(float)
+        candidatos_df = candidatos_df.head(top_k).reset_index(drop=True)
+
     max_len = max(len(seq) for seq in candidatos_df["seq"])
     seq_avg = []
     for i in range(max_len):
         valores = [seq[i] for seq in candidatos_df["seq"] if len(seq) > i and seq[i] is not None]
-        seq_avg.append(float(np.average(valores, weights=candidatos_df.loc[[idx for idx, seq in enumerate(candidatos_df["seq"]) if len(seq) > i and seq[i] is not None], "sim"])) if valores else np.nan)
+        pesos = candidatos_df.loc[[idx for idx, seq in enumerate(candidatos_df["seq"]) if len(seq) > i and seq[i] is not None], "sim"]
+        seq_avg.append(float(np.average(valores, weights=pesos)) if valores else np.nan)
 
     return {
         "motivo_atual": str(candidatos_df.iloc[0]["motivo_atual"]),
         "similaridade": float(candidatos_df["sim"].mean()),
+        "similaridade_rerank": float(candidatos_df["rerank_score"].mean()),
         "n_historico": int(len(candidatos_df)),
         "seq_media": seq_avg,
         "datas_referencia": [pd.to_datetime(d).strftime("%Y-%m-%d") for d in candidatos_df["date"].tolist()],
@@ -231,7 +310,7 @@ def recuperar_impacto_historico(motivos, cutoff_date, biblioteca_eventos, ativo,
     }
 
 
-def motivo_e_cluster_mais_relevante(motivos, emb_mgr_local, emb_repr, clusters_df, ativo):
+def motivo_e_cluster_mais_relevante(motivos, emb_mgr_local, emb_repr, clusters_df, ativo, rerank_config=None):
     if not motivos:
         return None, 0.0, None, None
 
@@ -252,21 +331,55 @@ def motivo_e_cluster_mais_relevante(motivos, emb_mgr_local, emb_repr, clusters_d
     if clusters_df_f.empty:
         return None, 0.0, None, None
 
-    best = {"motivo": None, "sim": -1.0, "cluster": None, "row": None}
+    candidate_texts = []
+    for _, row in clusters_df_f.iterrows():
+        frases_originais = parse_jsonish_list(row.get("frases_originais", []))
+        texto_cluster = " ".join(
+            [str(row.get("frase_exemplo", "")).strip()] + frases_originais[:6]
+        ).strip()
+        candidate_texts.append(texto_cluster or str(row.get("frase_exemplo", "")).strip())
+
+    config = _resolve_rerank_config(rerank_config)
+    best = {"motivo": None, "sim": -1.0, "score": -1.0, "cluster": None, "row": None}
     for motivo in motivos:
         emb = np.asarray(emb_mgr_local.embed(motivo)).reshape(1, -1)
         sims = _similaridade_coseno(emb, emb_f)
-        idx = int(np.argmax(sims))
-        sim = float(sims[idx])
-        if sim > best["sim"]:
+        if config.get("enabled", True):
+            pool_idx = select_semantic_pool(
+                semantic_scores=sims.tolist(),
+                top_k=1,
+                pool_size=int(config.get("pool_size", 8)),
+                semantic_margin=float(config.get("semantic_margin", 0.06)),
+            )
+            pool_texts = [candidate_texts[idx] for idx in pool_idx]
+            pool_sims = sims[pool_idx]
+            pool_dates = clusters_df_f.iloc[pool_idx]["last_event_date"].tolist() if "last_event_date" in clusters_df_f.columns else None
+            rerank_scores = hybrid_rerank_scores(
+                query=motivo,
+                texts=pool_texts,
+                semantic_scores=pool_sims.tolist(),
+                dates=pool_dates,
+                semantic_weight=float(config.get("semantic_weight", 0.9)),
+                lexical_weight=float(config.get("lexical_weight", 0.07)),
+                recency_weight=float(config.get("recency_weight", 0.03)),
+            )
+            pool_best = int(np.argmax(rerank_scores))
+            idx = int(pool_idx[pool_best])
+            sim = float(sims[idx])
+            score = float(rerank_scores[pool_best])
+        else:
+            idx = int(np.argmax(sims))
+            sim = float(sims[idx])
+            score = sim
+        if score > best["score"]:
             row = clusters_df_f.iloc[idx]
             cluster_id = int(row["cluster"]) if "cluster" in row else idx
-            best.update({"motivo": motivo, "sim": sim, "cluster": cluster_id, "row": row})
+            best.update({"motivo": motivo, "sim": sim, "score": score, "cluster": cluster_id, "row": row})
 
     return best["motivo"], best["sim"], best["cluster"], best["row"]
 
 
-def aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo, sim_threshold=0.7, max_horizon=4, scale=0.4, decision_log=None):
+def aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo, sim_threshold=0.7, max_horizon=4, scale=0.4, decision_log=None, rerank_config=None):
     df = pred_df.copy()
     df["Pred_Ajustado"] = df.get("Pred_Ajustado", df["Pred"]).astype(float)
     dias = df.index
@@ -281,7 +394,14 @@ def aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo, sim_t
         if pos >= len(dias):
             continue
 
-        contexto = recuperar_impacto_historico(motivos, data_evt, biblioteca_eventos, ativo, sim_threshold=sim_threshold)
+        contexto = recuperar_impacto_historico(
+            motivos,
+            data_evt,
+            biblioteca_eventos,
+            ativo,
+            sim_threshold=sim_threshold,
+            rerank_config=rerank_config,
+        )
         if contexto is None:
             if decision_log is not None:
                 decision_log.append(
@@ -336,7 +456,7 @@ def aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo, sim_t
     return df
 
 
-def aplicar_walkforward_residual(pred_df, motivos_por_data, biblioteca_eventos, ativo, janela, base_col="Pred_Ajustado", decision_log=None):
+def aplicar_walkforward_residual(pred_df, motivos_por_data, biblioteca_eventos, ativo, janela, base_col="Pred_Ajustado", decision_log=None, rerank_config=None):
     df = pred_df.copy().reset_index()
     df["Base_Residual"] = df[base_col].astype(float)
     df["r"] = df["Real"] - df["Base_Residual"]
@@ -345,7 +465,11 @@ def aplicar_walkforward_residual(pred_df, motivos_por_data, biblioteca_eventos, 
     for data in df["Date"]:
         dnorm = pd.to_datetime(data).normalize()
         motivos = motivos_por_data.get(dnorm, [])
-        contexto = recuperar_impacto_historico(motivos, dnorm, biblioteca_eventos, ativo) if motivos else None
+        contexto = (
+            recuperar_impacto_historico(motivos, dnorm, biblioteca_eventos, ativo, rerank_config=rerank_config)
+            if motivos
+            else None
+        )
         eventos.append(1 if motivos else 0)
         sims.append(float(contexto["similaridade"]) if contexto else 0.0)
         hist_counts.append(int(contexto["n_historico"]) if contexto else 0)
@@ -398,12 +522,21 @@ def aplicar_walkforward_residual(pred_df, motivos_por_data, biblioteca_eventos, 
     return df.set_index("Date")
 
 
-def encontrar_scale_otimo(pred_df, motivos_por_data, biblioteca_eventos, ativo):
+def encontrar_scale_otimo(pred_df, motivos_por_data, biblioteca_eventos, ativo, rerank_config=None):
     candidatos = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
     melhor, menor = 0.4, float("inf")
 
     for scale in candidatos:
-        temp = aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo=ativo, sim_threshold=0.7, max_horizon=4, scale=scale)
+        temp = aplicar_seq_real(
+            pred_df,
+            motivos_por_data,
+            biblioteca_eventos,
+            ativo=ativo,
+            sim_threshold=0.7,
+            max_horizon=4,
+            scale=scale,
+            rerank_config=rerank_config,
+        )
         rmse = np.sqrt(mean_squared_error(temp["Real"], temp["Pred_Ajustado"]))
         if rmse < menor:
             menor = rmse
@@ -449,7 +582,7 @@ def _save_prediction_details(ativo, tipo, pred_base, seq_only, residual_only, hy
     return out_path
 
 
-def rodar_modelo_unificado(csv_path, model_path, out_html, nome, tipo):
+def rodar_modelo_unificado(csv_path, model_path, out_html, nome, tipo, rerank_config=None, gerar_plot=True):
     print(f"\n=========== {nome} ({tipo.upper()}) ===========")
 
     ativo = _ativo_from_nome(nome)
@@ -461,11 +594,38 @@ def rodar_modelo_unificado(csv_path, model_path, out_html, nome, tipo):
     biblioteca_eventos = carregar_biblioteca_eventos(OUTPUT_NOTICIAS_DIR)
 
     decision_log = []
-    scale = encontrar_scale_otimo(pred_df, motivos_por_data, biblioteca_eventos, ativo)
+    config = _resolve_rerank_config(rerank_config, model_type=tipo)
+    scale = encontrar_scale_otimo(pred_df, motivos_por_data, biblioteca_eventos, ativo, rerank_config=config)
 
-    seq_only = aplicar_seq_real(pred_df, motivos_por_data, biblioteca_eventos, ativo=ativo, scale=scale, decision_log=decision_log)
-    residual_only = aplicar_walkforward_residual(pred_df, motivos_por_data, biblioteca_eventos, ativo=ativo, janela=15, base_col="Pred", decision_log=decision_log)
-    hybrid = aplicar_walkforward_residual(seq_only, motivos_por_data, biblioteca_eventos, ativo=ativo, janela=15, base_col="Pred_Ajustado", decision_log=decision_log)
+    seq_only = aplicar_seq_real(
+        pred_df,
+        motivos_por_data,
+        biblioteca_eventos,
+        ativo=ativo,
+        scale=scale,
+        decision_log=decision_log,
+        rerank_config=config,
+    )
+    residual_only = aplicar_walkforward_residual(
+        pred_df,
+        motivos_por_data,
+        biblioteca_eventos,
+        ativo=ativo,
+        janela=15,
+        base_col="Pred",
+        decision_log=decision_log,
+        rerank_config=config,
+    )
+    hybrid = aplicar_walkforward_residual(
+        seq_only,
+        motivos_por_data,
+        biblioteca_eventos,
+        ativo=ativo,
+        janela=15,
+        base_col="Pred_Ajustado",
+        decision_log=decision_log,
+        rerank_config=config,
+    )
     hybrid["Pred_Ajustado"] = hybrid["Pred_Final"]
     hybrid["Pred_Final_Price"] = hybrid["Pred_Final"]
 
@@ -480,9 +640,10 @@ def rodar_modelo_unificado(csv_path, model_path, out_html, nome, tipo):
     PREVISOES_MODELOS[nome] = pred_df[["Pred", "Real"]].copy()
     PREVISOES_HIBRIDOS[nome] = hybrid[["Pred_Ajustado", "Real"]].copy()
 
-    clusters_df = pd.read_csv(DATA_DIR / "cluster_motivos.csv") if (DATA_DIR / "cluster_motivos.csv").exists() else pd.DataFrame(columns=["cluster", "frase_exemplo", "ativo_cluster"])
-    emb_repr = emb_mgr.embed_lote(clusters_df["frase_exemplo"].astype(str).tolist()) if not clusters_df.empty else np.zeros((0, 1536))
-    plotar_hibrido_corrigido(hybrid, motivos_por_data, emb_mgr, clusters_df, emb_repr, out_html, nome)
+    if gerar_plot:
+        clusters_df = pd.read_csv(DATA_DIR / "cluster_motivos.csv") if (DATA_DIR / "cluster_motivos.csv").exists() else pd.DataFrame(columns=["cluster", "frase_exemplo", "ativo_cluster"])
+        emb_repr = emb_mgr.embed_lote(clusters_df["frase_exemplo"].astype(str).tolist()) if not clusters_df.empty else np.zeros((0, 1536))
+        plotar_hibrido_corrigido(hybrid, motivos_por_data, emb_mgr, clusters_df, emb_repr, out_html, nome)
 
     RESULTADOS.append(
         {
@@ -498,7 +659,7 @@ def rodar_modelo_unificado(csv_path, model_path, out_html, nome, tipo):
     )
 
 
-def eval_modelos():
+def eval_modelos(gerar_plots=True):
     ativos = {"PETR4": "petr4", "PRIO3": "prio3", "EXXO34": "exxo34"}
     outs = {
         "lstm": lambda a: IMG_DIR / f"previsao_lstm_{a}.html",
@@ -515,6 +676,7 @@ def eval_modelos():
                 str(outs[tipo](nomefile)),
                 f"{ativo} {nome_format[tipo]}",
                 tipo=tipo,
+                gerar_plot=gerar_plots,
             )
 
     motivos_por_data = extrair_motivos(OUTPUT_NOTICIAS_DIR)
@@ -527,17 +689,18 @@ def eval_modelos():
         if not prev_puro:
             continue
         df_base = list(prev_puro.values())[0]
-        plotar_comparacao_por_ativo(
-            df_base,
-            prev_puro,
-            prev_hib,
-            motivos_por_data,
-            emb_mgr,
-            clusters_df,
-            emb_repr,
-            str(IMG_DIR / f"comparacao_{ativo.lower()}.html"),
-            ativo,
-        )
+        if gerar_plots:
+            plotar_comparacao_por_ativo(
+                df_base,
+                prev_puro,
+                prev_hib,
+                motivos_por_data,
+                emb_mgr,
+                clusters_df,
+                emb_repr,
+                str(IMG_DIR / f"comparacao_{ativo.lower()}.html"),
+                ativo,
+            )
 
     df_final = pd.DataFrame(RESULTADOS)
     print(df_final.to_string(index=False))

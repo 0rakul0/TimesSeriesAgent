@@ -1,11 +1,12 @@
 \documentclass[12pt]{article}
 
+\usepackage[T1]{fontenc}
 \usepackage{amsmath}
 \usepackage{sbc-template}
 \usepackage{natbib}
 \usepackage{graphicx,url}
 \usepackage{tabularx}
-\usepackage[brazil]{babel}
+\usepackage[brazilian]{babel}
 \usepackage[utf8]{inputenc}
 \usepackage{algorithm}
 \usepackage{algorithmic}
@@ -17,13 +18,13 @@
 
 \emergencystretch=3em
 
-\title{Recuperacao Semantica de Eventos Historicos para Previsao Hibrida de Series Temporais Financeiras}
+\title{Recuperação Semântica de Eventos Históricos para Previsão Híbrida de Séries Temporais Financeiras}
 
-\author{Jefferson Silva dos Anjos\inst{1}, Luiz Jose Henrique Nogaroli Cavalcante\inst{2}, Eduardo Soares Ogasawara\inst{3}}
+\author{Jefferson Silva dos Anjos\inst{1}, Luiz José Henrique Nogaroli Cavalcante\inst{2}, Eduardo Soares Ogasawara\inst{3}}
 
-\address{\inst{1}Programa de Pos-Graduacao em Ciencia da Computacao (PPCIC), CEFET/RJ\\
-\inst{2}Programa de Pos-Graduacao (PPPRO), CEFET/RJ\\
-\inst{3}Centro Federal de Educacao Tecnologica Celso Suckow da Fonseca (CEFET/RJ)\\
+\address{\inst{1}Programa de Pós-Graduação em Ciência da Computação (PPCIC), CEFET/RJ\\
+\inst{2}Programa de Pós-Graduação (PPPRO), CEFET/RJ\\
+\inst{3}Centro Federal de Educação Tecnológica Celso Suckow da Fonseca (CEFET/RJ)\\
 Rio de Janeiro -- RJ -- Brasil}
 
 \begin{document}
@@ -31,128 +32,128 @@ Rio de Janeiro -- RJ -- Brasil}
 \maketitle
 
 \begin{resumo}
-Este artigo propoe um metodo hibrido para previsao financeira de curto prazo que combina modelos quantitativos com recuperacao semantica de eventos historicos comparaveis. O pipeline detecta eventos por limiar de retorno, estrutura noticias em JSON, associa a cada evento sua sequencia realizada de impacto e reutiliza essa biblioteca em avaliacao \textit{walk-forward}. O metodo recupera eventos semanticamente semelhantes anteriores a data prevista, aplica um ajuste por impacto ponderado por similaridade e aprende uma correcao residual sensivel a evento. Experimentos com PETR4, PRIO3 e EXXO34, sincronizados com o Brent, geram 12.159 previsoes fora da amostra sobre baselines LSTM, Autoencoder recorrente e Transformer. O metodo reduz o RMSE medio de 1.6248 para 0.8470 (47,9\%), o MAE medio de 1.2445 para 0.6187 (50,3\%) e supera os modelos base em 76,8\% dos dias avaliados. Os resultados mostram que a recuperacao de eventos comparaveis e um complemento util e auditavel aos modelos puramente quantitativos.
+Este artigo propõe um método híbrido para previsão financeira de curto prazo que combina modelos quantitativos com recuperação semântica de eventos históricos comparáveis. O pipeline detecta eventos por limiar de retorno, estrutura notícias em JSON, associa a cada evento sua sequência realizada de impacto e reutiliza essa biblioteca em avaliação \textit{walk-forward}. O método recupera eventos semanticamente semelhantes anteriores à data prevista, aplica um ajuste por impacto ponderado por similaridade e aprende uma correção residual sensível a evento. Experimentos com PETR4, PRIO3 e EXXO34, sincronizados com o Brent, geram 12.159 previsões fora da amostra sobre baselines LSTM, Autoencoder recorrente e Transformer. Na configuração atual, que incorpora um reranqueamento conservador apenas como desempate em um pool semântico curto, o método reduz o RMSE médio de 1.6248 para 0.8537 (47,5\%), o MAE médio de 1.2445 para 0.6253 (49,8\%) e supera os modelos base em 76,2\% dos dias avaliados. Os resultados mostram que a recuperação de eventos comparáveis é um complemento útil e auditável aos modelos puramente quantitativos.
 \end{resumo}
 
-\begin{palavras-chave}
-Palavras-chaves: Previsao de series temporais financeiras; Recuperacao de eventos; Noticias; Modelos hibridos; Similaridade semantica; Correcao residual.
-\end{palavras-chave}
+\noindent\textbf{Palavras-chave:} Previsão de séries temporais financeiras; Recuperação de eventos; Notícias; Modelos híbridos; Similaridade semântica; Correção residual.
 
 \begin{abstract}
-This paper proposes a hybrid method for short-horizon financial forecasting that combines quantitative models with semantic retrieval of comparable historical events. The pipeline detects events through return thresholds, structures news into JSON records, associates each event with its realized post-event sequence, and reuses this event library under walk-forward evaluation. The method retrieves semantically similar past events, applies a similarity-weighted impact adjustment, and learns an event-aware residual correction. Experiments on PETR4, PRIO3 and EXXO34, synchronized with Brent, generate 12,159 out-of-sample forecasts across LSTM, recurrent autoencoder and Transformer baselines. The hybrid method reduces average RMSE from 1.6248 to 0.8470 (47.9\%), reduces average MAE from 1.2445 to 0.6187 (50.3\%), and outperforms the base models on 76.8\% of the evaluated days. These results show that retrieving comparable historical events is a useful and auditable complement to purely quantitative forecasting.
+This paper proposes a hybrid method for short-horizon financial forecasting that combines quantitative models with semantic retrieval of comparable historical events. The pipeline detects events through return thresholds, structures news into JSON records, associates each event with its realized post-event sequence, and reuses this event library under walk-forward evaluation. The method retrieves semantically similar past events, applies a similarity-weighted impact adjustment, and learns an event-aware residual correction. Experiments on PETR4, PRIO3 and EXXO34, synchronized with Brent, generate 12,159 out-of-sample forecasts across LSTM, recurrent autoencoder and Transformer baselines. In the current configuration, which includes a conservative reranking stage only as a tie-breaker inside a short semantic pool, the hybrid method reduces average RMSE from 1.6248 to 0.8537 (47.5\%), reduces average MAE from 1.2445 to 0.6253 (49.8\%), and outperforms the base models on 76.2\% of the evaluated days. These results show that retrieving comparable historical events is a useful and auditable complement to purely quantitative forecasting.
 \end{abstract}
 
-\begin{keywords}
-Keywords: Financial time series forecasting; Event retrieval; News-aware forecasting; Hybrid models; Semantic similarity; Residual correction.
-\end{keywords}
+\noindent\textbf{Keywords:} Financial time series forecasting; Event retrieval; News-aware forecasting; Hybrid models; Semantic similarity; Residual correction.
 
-\section{Introducao}
+\section{Introdução}
 
-Mercados financeiros reagem continuamente a informacoes corporativas, macroeconomicas e geopoliticas. Embora essa premissa seja bem aceita, a incorporacao operacional de noticias em modelos preditivos ainda permanece incompleta. Em boa parte da literatura, os modelos sao treinados apenas com historico de precos. Quando texto e incorporado, seu uso costuma ocorrer como uma variavel contemporanea de sentimento ou como um canal adicional de classificacao de movimento \cite{Tetlock:2007, Tetlock:2008, Xu:2018, Sawhney:2020}. Esse desenho deixa em aberto uma questao metodologica importante: como reutilizar eventos historicos semanticamente semelhantes e suas trajetorias observadas de impacto para melhorar previsoes numericas de curto prazo?
+Mercados financeiros reagem continuamente a informações corporativas, macroeconômicas e geopolíticas. Embora essa premissa seja bem aceita, a incorporação operacional de notícias em modelos preditivos ainda permanece incompleta. Em boa parte da literatura, os modelos são treinados apenas com histórico de preços. Quando o texto é incorporado, seu uso costuma ocorrer como uma variável contemporânea de sentimento ou como um canal adicional de classificação de movimento \cite{Tetlock:2007, Tetlock:2008, Xu:2018, Sawhney:2020}. Esse desenho deixa em aberto uma questão metodológica importante: como reutilizar eventos históricos semanticamente semelhantes e suas trajetórias observadas de impacto para melhorar previsões numéricas de curto prazo?
 
-O problema e particularmente relevante em ativos expostos a choques recorrentes de commodity, regulacao e geopolitica, como os do setor de oleo e gas. Nesses casos, o mesmo tipo de noticia tende a reaparecer em contextos diferentes, com efeitos que nem sempre se esgotam no dia do evento. A abordagem proposta investiga essa lacuna ao converter noticias em eventos estruturados, estimar suas sequencias realizadas de impacto e reaproveitar essas sequencias quando um evento semanticamente comparavel volta a ocorrer.
+O problema é particularmente relevante em ativos expostos a choques recorrentes de commodity, regulação e geopolítica, como os do setor de óleo e gás. Nesses casos, o mesmo tipo de notícia tende a reaparecer em contextos diferentes, com efeitos que nem sempre se esgotam no dia do evento. A abordagem proposta investiga essa lacuna ao converter notícias em eventos estruturados, estimar suas sequências realizadas de impacto e reaproveitar essas sequências quando um evento semanticamente comparável volta a ocorrer.
 
-A abordagem proposta organiza a camada informacional de forma modular. A avaliacao offline principal recupera diretamente pares \textit{motivo-sequencia} da biblioteca historica de eventos, aplica um ajuste por impacto semantico com corte temporal estrito e depois aprende uma correcao residual em regime \textit{walk-forward}. Os clusters semanticos continuam existindo, mas cumprem papel principalmente exploratorio e de auditabilidade.
+A abordagem proposta organiza a camada informacional de forma modular. A avaliação offline principal recupera diretamente pares \textit{motivo-sequência} da biblioteca histórica de eventos, aplica um ajuste por impacto semântico com corte temporal estrito e depois aprende uma correção residual em regime \textit{walk-forward}. Os clusters semânticos continuam existindo, mas cumprem papel principalmente exploratório e de auditabilidade.
 
-Nossa hipotese de pesquisa e que recuperar eventos semanticamente comparaveis e suas sequencias observadas de impacto reduz o erro dos modelos base e melhora a auditabilidade da previsao em relacao a abordagens puramente quantitativas.
+Nossa hipótese de pesquisa é que recuperar eventos semanticamente comparáveis e suas sequências observadas de impacto reduz o erro dos modelos base e melhora a auditabilidade da previsão em relação a abordagens puramente quantitativas.
 
-Com base nisso, as contribuicoes centrais do artigo sao:
+Com base nisso, as contribuições centrais do artigo são:
 
 \begin{itemize}
-    \item uma biblioteca de eventos financeiros estruturados a partir de noticias, com propagacao observada de impacto apos o evento;
-    \item um mecanismo de recuperacao semantica de eventos historicos comparaveis com restricao temporal explicita;
-    \item um modelo hibrido em duas etapas, composto por ajuste sequencial por similaridade e por correcao residual \textit{walk-forward};
-    \item uma avaliacao comparativa sobre tres arquiteturas de base e tres ativos do setor de oleo e gas, com evidencias quantitativas, ablacoes e logs de decisao.
+    \item uma biblioteca de eventos financeiros estruturados a partir de notícias, com propagação observada de impacto após o evento;
+    \item um mecanismo de recuperação semântica de eventos históricos comparáveis com restrição temporal explícita;
+    \item um modelo híbrido em duas etapas, composto por ajuste sequencial por similaridade e por correção residual \textit{walk-forward};
+    \item uma avaliação comparativa sobre três arquiteturas de base e três ativos do setor de óleo e gás, com evidências quantitativas, ablações e logs de decisão.
 \end{itemize}
 
-\section{Referencial Teorico}
+\section{Referencial Teórico}
 
-\subsection{Previsao financeira com modelos quantitativos}
+\subsection{Previsão financeira com modelos quantitativos}
 
-Modelos baseados em aprendizado profundo tem sido usados com frequencia na previsao financeira por sua capacidade de capturar relacoes nao lineares e dependencias temporais complexas. Redes LSTM mostraram desempenho competitivo em relacao a abordagens tradicionais \cite{Fischer:2018}, enquanto Autoencoders recorrentes ajudam a construir representacoes latentes mais robustas a ruido \cite{Bao:2017}. Mais recentemente, arquiteturas baseadas em atencao, como o Transformer e suas adaptacoes para series temporais, passaram a disputar esse mesmo espaco por sua eficiencia em sequencias longas e em cenarios multi-horizonte \cite{Vaswani:2017, Lim:2021, Wu:2021}.
+Modelos baseados em aprendizado profundo têm sido usados com frequência na previsão financeira por sua capacidade de capturar relações não lineares e dependências temporais complexas. Redes LSTM mostraram desempenho competitivo em relação a abordagens tradicionais \cite{Fischer:2018}, enquanto Autoencoders recorrentes ajudam a construir representações latentes mais robustas a ruído \cite{Bao:2017}. Mais recentemente, arquiteturas baseadas em atenção, como o Transformer e suas adaptações para séries temporais, passaram a disputar esse mesmo espaço por sua eficiência em sequências longas e em cenários multi-horizonte \cite{Vaswani:2017, Lim:2021, Wu:2021}.
 
-\subsection{Noticias, texto e eventos no mercado financeiro}
+\subsection{Notícias, texto e eventos no mercado financeiro}
 
-Ha ampla evidencia de que texto financeiro e fluxo de noticias afetam retorno, volume e percepcao de risco \cite{Tetlock:2007, Tetlock:2008, Loughran:2011, Mitra:2011}. O desenvolvimento de embeddings distribuidos e de modelos contextualizados ampliou a capacidade de representar semelhanca semantica entre frases e eventos \cite{Mikolov:2013, Devlin:2019, Araci:2019, Reimers:2019}. Ainda assim, grande parte dos trabalhos usa o texto como um sinal agregado no instante corrente, e nao como um mecanismo explicito de recuperacao de padroes historicos de impacto.
+Há ampla evidência de que texto financeiro e fluxo de notícias afetam retorno, volume e percepção de risco \cite{Tetlock:2007, Tetlock:2008, Loughran:2011, Mitra:2011}. O desenvolvimento de embeddings distribuídos e de modelos contextualizados ampliou a capacidade de representar semelhança semântica entre frases e eventos \cite{Mikolov:2013, Devlin:2019, Araci:2019, Reimers:2019}. Ainda assim, grande parte dos trabalhos usa o texto como um sinal agregado no instante corrente, e não como um mecanismo explícito de recuperação de padrões históricos de impacto.
 
-\subsection{Reacao gradual e memoria de eventos}
+\subsection{Reação gradual e memória de eventos}
 
-Embora a Hipotese dos Mercados Eficientes proponha incorporacao rapida da informacao aos precos \cite{Fama:1970}, a literatura tambem documenta reacoes graduais, exageros e reversoes \cite{Cutler:1989, Barberis:1998, Hong:1999}. Essa linha teorica abre espaco para metodologias que representem o impacto de um evento como uma sequencia temporal observavel, e nao apenas como um choque instantaneo. E precisamente nesse ponto que a recuperacao semantica de eventos historicos se torna relevante: ela oferece uma forma concreta de consultar experiencias anteriores comparaveis e reutilizar suas trajetorias observadas.
+Embora a Hipótese dos Mercados Eficientes proponha incorporação rápida da informação aos preços \cite{Fama:1970}, a literatura também documenta reações graduais, exageros e reversões \cite{Cutler:1989, Barberis:1998, Hong:1999}. Essa linha teórica abre espaço para metodologias que representem o impacto de um evento como uma sequência temporal observável, e não apenas como um choque instantâneo. É precisamente nesse ponto que a recuperação semântica de eventos históricos se torna relevante: ela oferece uma forma concreta de consultar experiências anteriores comparáveis e reutilizar suas trajetórias observadas.
 
 \section{Trabalhos Relacionados}
 
-Os trabalhos mais proximos desta proposta podem ser agrupados em quatro familias. A primeira reune modelos puramente quantitativos baseados em series de mercado, como LSTM, Autoencoders e Transformers adaptados para previsao temporal \cite{Fischer:2018, Bao:2017, Lim:2021}. Essas abordagens servem como base de comparacao natural, mas tratam choques informacionais apenas como parte da dinamica endogena da serie.
+Os trabalhos mais próximos desta proposta podem ser agrupados em quatro famílias. A primeira reúne modelos puramente quantitativos baseados em séries de mercado, como LSTM, Autoencoders e Transformers adaptados para previsão temporal \cite{Fischer:2018, Bao:2017, Lim:2021}. Essas abordagens servem como base de comparação natural, mas tratam choques informacionais apenas como parte da dinâmica endógena da série.
 
-A segunda familia usa noticias, eventos ou textos de redes sociais para prever direcao de mercado \cite{Ding:2014, Ding:2015, Xu:2018, Sawhney:2020}. O ganho principal desses trabalhos esta em incorporar texto ao processo preditivo, mas em geral o problema e formulado como classificacao de movimento e o texto e fundido ao modelo ponta a ponta, sem gerar uma biblioteca auditavel de sequencias historicas reutilizaveis.
+A segunda família usa notícias, eventos ou textos de redes sociais para prever direção de mercado \cite{Ding:2014, Ding:2015, Xu:2018, Sawhney:2020}. O ganho principal desses trabalhos está em incorporar texto ao processo preditivo, mas, em geral, o problema é formulado como classificação de movimento e o texto é fundido ao modelo ponta a ponta, sem gerar uma biblioteca auditável de sequências históricas reutilizáveis.
 
-Alem da literatura academica, ha implementacoes publicas amplamente divulgadas que combinam aprendizado profundo, multiplas fontes de atributos e sinais textuais para previsao de mercado. Um exemplo e o repositorio \textit{stockpredictionai}, de Banushev \cite{Banushev:2019}, que organiza uma proposta aplicada com GANs, LSTMs, CNNs e diferentes grupos de \textit{features}. Essa linha e relevante como referencia pratica, mas difere da proposta aqui apresentada por tratar o texto predominantemente como entrada do modelo preditivo, e nao como uma biblioteca explicita de eventos historicos com sequencias observadas e recuperacao auditavel.
+Além da literatura acadêmica, há implementações públicas amplamente divulgadas que combinam aprendizado profundo, múltiplas fontes de atributos e sinais textuais para previsão de mercado. Um exemplo é o repositório \textit{stockpredictionai}, de Banushev \cite{Banushev:2019}, que organiza uma proposta aplicada com GANs, LSTMs, CNNs e diferentes grupos de \textit{features}. Essa linha é relevante como referência prática, mas difere da proposta aqui apresentada por tratar o texto predominantemente como entrada do modelo preditivo, e não como uma biblioteca explícita de eventos históricos com sequências observadas e recuperação auditável.
 
-A terceira familia avanca para arquiteturas com memoria e interacoes mais estruturadas entre texto, tempo e multiplos ativos \cite{Luo:2023}. Ja a quarta familia aproxima-se de esquemas de recuperacao e memoria baseados em LLMs \cite{Xiao:2025FinSrag, Wang:2025StockMem}. Em ambos os casos, a literatura recente oferece mecanismos sofisticados de memoria, mas tende a depender de arquiteturas mais pesadas, foco em classificacao ou uso dominante do modelo de linguagem como \textit{backbone}.
+A terceira família avança para arquiteturas com memória e interações mais estruturadas entre texto, tempo e múltiplos ativos \cite{Luo:2023}. Já a quarta família aproxima-se de esquemas de recuperação e memória baseados em LLMs ou em recuperação aumentada para previsão \cite{Li:2025RAF, Xiao:2025FinSrag, Wang:2025StockMem}. Em ambos os casos, a literatura recente oferece mecanismos sofisticados de memória, mas tende a depender de arquiteturas mais pesadas, foco em classificação ou uso dominante do modelo de linguagem como \textit{backbone}.
 
-Em contraste, o presente artigo propoe uma alternativa mais leve e orientada a previsao numerica: a unidade principal de memoria nao e um estado latente do modelo, mas uma biblioteca explicita de eventos historicos com sequencias observadas de impacto; a recuperacao e feita com corte temporal estrito; e a integracao com o preditor ocorre por ajuste sequencial e correcao residual. A lacuna preenchida, portanto, esta na combinacao entre eventos estruturados, recuperacao semantica direta, reutilizacao de sequencias observadas e avaliacao auditavel sobre baselines quantitativos padrao.
+Uma linha adjacente vem da literatura de recuperação em dois estágios, na qual uma busca inicial é refinada por reranqueamento tardio. Em IR geral, ColBERT mostra como preservar interação fina entre consulta e documento com custo viável \cite{Khattab:2020}. No domínio financeiro, Zhao et al. analisam componentes de recuperação em pipelines RAG \cite{Zhao:2024}, FinGEAR adota um reranqueador em dois estágios para documentos financeiros longos \cite{Li:2025FinGEAR} e Cheng et al. mostram ganho empírico de reranking neural em QA sobre relatórios financeiros \cite{Cheng:2026FinRerank}.
+
+Essas referências indicam que o reranqueamento já foi utilizado no domínio financeiro, mas predominantemente para QA e RAG documental, não para recuperar eventos históricos análogos e suas trajetórias futuras de preço. Trabalhos como \textit{Knowledge-Driven Event Embedding} \cite{Ding:2016} e \textit{StockMem} \cite{Wang:2025StockMem} aproximam-se mais do uso de memória de eventos em previsão, inclusive com foco em similaridade de eventos e recuperação de cenários análogos. Ainda assim, até onde alcança nossa revisão, não encontramos um antecedente que combine reranqueamento local de candidatos semânticos com seleção de clusters e eventos para reutilizar sequências realizadas de impacto em previsão numérica de curto prazo. Em contraste, o presente artigo propõe uma alternativa mais leve e orientada à previsão numérica: a unidade principal de memória não é um estado latente do modelo, mas uma biblioteca explícita de eventos históricos com sequências observadas de impacto; a recuperação é feita com corte temporal estrito; e a integração com o preditor ocorre por ajuste sequencial e correção residual.
 
 \section{Metodologia}
 
 \subsection{Escopo experimental e dados}
 
-O escopo empirico do estudo abrange os ativos PETR4, PRIO3 e EXXO34, sincronizados com o Brent (BZ=F) como proxy de commodity. O pipeline trabalha com aproximadamente cinco anos de dados diarios provenientes do Yahoo Finance, cobrindo o periodo que, na base atual de eventos, vai de 10 de novembro de 2020 a 25 de marco de 2026. O foco setorial foi deliberado: ativos de oleo e gas sao fortemente sensiveis a choques de noticia, commodity, geopolitica e regulacao, o que favorece a observacao de efeitos recorrentes.
+O escopo empírico do estudo abrange os ativos PETR4, PRIO3 e EXXO34, sincronizados com o Brent (BZ=F) como proxy de commodity. O pipeline trabalha com aproximadamente cinco anos de dados diários provenientes do Yahoo Finance, cobrindo o período que, na base atual de eventos, vai de 10 de novembro de 2020 a 25 de março de 2026. O foco setorial foi deliberado: ativos de óleo e gás são fortemente sensíveis a choques de notícia, commodity, geopolítica e regulação, o que favorece a observação de efeitos recorrentes.
 
 \begin{algorithm}[H]
-\caption{Resumo do pipeline hibrido proposto}
+\caption{Resumo do pipeline híbrido proposto}
 \label{alg:pipeline}
 \small
 \begin{algorithmic}[1]
 \STATE Detectar dias de evento por limiar de retorno absoluto
 \STATE Estruturar cada evento em JSON com contexto textual e motivos
-\STATE Construir a biblioteca historica com pares \textit{motivo-sequencia} e datas
-\STATE Gerar previsoes base com LSTM, Autoencoder recorrente e Transformer
-\FOR{cada data $t$ na avaliacao \textit{walk-forward}}
-    \STATE Recuperar eventos anteriores a $t$ com ativo compativel e similaridade semantica acima do limiar
-    \STATE Agregar as sequencias recuperadas por media ponderada por similaridade
-    \STATE Ajustar a previsao base no horizonte D0--D4
-    \STATE Estimar a correcao residual usando apenas a janela passada observada
+\STATE Construir a biblioteca histórica com pares \textit{motivo-sequência} e datas
+\STATE Gerar previsões base com LSTM, Autoencoder recorrente e Transformer
+\FOR{cada data $t$ na avaliação \textit{walk-forward}}
+    \STATE Recuperar candidatos anteriores a $t$, formar um pool semântico curto e aplicar reranqueamento local
+    \STATE Agregar as sequências recuperadas por média ponderada pela similaridade semântica original
+    \STATE Ajustar a previsão base no horizonte D0--D4
+    \STATE Estimar a correção residual usando apenas a janela passada observada
 \ENDFOR
-\STATE Registrar previsoes, eventos recuperados e metadados de auditoria
+\STATE Registrar previsões, eventos recuperados e metadados de auditoria
 \end{algorithmic}
 \end{algorithm}
 
-\subsection{Deteccao e estruturacao de eventos}
+\subsection{Detecção e estruturação de eventos}
 
-Eventos sao disparados quando a variacao percentual diaria absoluta do ativo ultrapassa um limiar predefinido. A versao principal do experimento usa um limiar de 2,0\%, mas a abordagem tambem gera analise de sensibilidade para 1,5\% e 2,5\%. Na configuracao de 2,0\%, a base atual contem 320 eventos para PETR4, 469 para PRIO3 e 301 para EXXO34.
+Eventos são disparados quando a variação percentual diária absoluta do ativo ultrapassa um limiar predefinido. A versão principal do experimento usa um limiar de 2,0\%, mas a abordagem também gera análise de sensibilidade para 1,5\% e 2,5\%. Na configuração de 2,0\%, a base atual contém 320 eventos para PETR4, 469 para PRIO3 e 301 para EXXO34.
 
-Quando um evento e detectado, o pipeline consulta um modelo da OpenAI para estruturar um registro JSON contendo data, ativo, retorno do dia, descricao do contexto, motivos identificados, sentimento e fontes. Quando o LLM nao encontra contexto suficiente, o pipeline utiliza Tavily como \textit{fallback} de busca e reexecuta a estruturacao do evento sobre o material recuperado. O conjunto experimental armazena atualmente 1.619 arquivos JSON de evento, com 3.253 motivos textuais identificados.
+Quando um evento é detectado, o pipeline consulta um modelo da OpenAI para estruturar um registro JSON contendo data, ativo, retorno do dia, descrição do contexto, motivos identificados, sentimento e fontes. Quando o LLM não encontra contexto suficiente, o pipeline utiliza Tavily como \textit{fallback} de busca e reexecuta a estruturação do evento sobre o material recuperado. O conjunto experimental armazena atualmente 1.619 arquivos JSON de evento, com 3.253 motivos textuais identificados.
 
-\subsection{Sequencias realizadas e biblioteca de eventos}
+\subsection{Sequências realizadas e biblioteca de eventos}
 
-Cada evento recebe uma sequencia realizada de impacto apos sua ocorrencia. O processo calcula retornos do dia do evento e dos pregoes seguintes, armazenando sequencias D0--D5 quando houver dados suficientes. Se um novo evento ocorre antes do fim da janela, a propagacao e interrompida, evitando sobreposicao ingenua de impactos. Ao considerar apenas registros com sequencia nao vazia, a biblioteca corrente de recuperacao passa a conter 3.139 pares \textit{motivo-sequencia}.
+Cada evento recebe uma sequência realizada de impacto após sua ocorrência. O processo calcula retornos do dia do evento e dos pregões seguintes, armazenando sequências D0--D5 quando houver dados suficientes. Se um novo evento ocorre antes do fim da janela, a propagação é interrompida, evitando sobreposição ingênua de impactos. Ao considerar apenas registros com sequência não vazia, a biblioteca corrente de recuperação passa a conter 3.139 pares \textit{motivo-sequência}.
 
-Formalmente, definimos a biblioteca historica como
+Formalmente, definimos a biblioteca histórica como
 \[
 \mathcal{L} = \{(m_i, q_i, d_i, a_i)\}_{i=1}^{N},
 \]
-em que $m_i$ e o motivo textual do evento, $q_i$ e a sequencia observada de impacto, $d_i$ e a data do evento e $a_i$ e o ativo associado. Na inferencia, apenas itens com $d_i < t$ e ativo compativel com a previsao corrente podem ser usados, o que reduz vazamento de informacao futura.
+em que $m_i$ é o motivo textual do evento, $q_i$ é a sequência observada de impacto, $d_i$ é a data do evento e $a_i$ é o ativo associado. Na inferência, apenas itens com $d_i < t$ e ativo compatível com a previsão corrente podem ser usados, o que reduz vazamento de informação futura.
 
-\subsection{Clusters semanticos como camada exploratoria}
+\subsection{Clusters semânticos como camada exploratória}
 
-Paralelamente a biblioteca direta de eventos, a abordagem constroi uma camada de clusterizacao semantica. Os motivos sao embedados, podem ser ampliados por variacoes textuais quando ha poucos exemplos e sao agrupados por \textit{Agglomerative Clustering}. Na base atual, essa etapa gera 200 clusters exploratorios, 50 para cada um dos quatro grupos (PETR4, PRIO3, EXXO34 e Brent). Esses clusters sao uteis para auditoria qualitativa, para a pergunta de pesquisa sobre recorrencia de padroes e para o MVP online. Na avaliacao offline principal, entretanto, a unidade de recuperacao e o evento historico individual, e nao o cluster agregado.
+Paralelamente à biblioteca direta de eventos, a abordagem constrói uma camada de clusterização semântica. Os motivos são embedados, podem ser ampliados por variações textuais quando há poucos exemplos e são agrupados por \textit{Agglomerative Clustering}. Na base atual, essa etapa gera 200 clusters exploratórios, 50 para cada um dos quatro grupos (PETR4, PRIO3, EXXO34 e Brent). Esses clusters são úteis para auditoria qualitativa, para a pergunta de pesquisa sobre recorrência de padrões e para o MVP online. Na avaliação offline principal, entretanto, a unidade de recuperação é o evento histórico individual, e não o cluster agregado.
 
-\subsection{Modelos base e ajuste hibrido}
+Para a associação entre motivos correntes e clusters históricos, adotou-se uma estratégia de reranqueamento conservador em duas etapas. Primeiro, os candidatos são obtidos por similaridade semântica via embeddings. Em seguida, apenas um pequeno pool dos melhores candidatos é reranqueado com uma combinação ponderada de similaridade semântica, similaridade lexical e recência temporal. Esse desenho preserva a dominância do sinal semântico e usa o componente lexical apenas como critério de desempate local, reduzindo o risco de aproximações espúrias por sobreposição superficial de termos.
 
-Tres modelos quantitativos foram treinados como baselines: LSTM, Autoencoder recorrente e Transformer. Todos recebem series sincronizadas entre ativo e Brent e produzem previsoes base de preco. Sobre essa previsao, o metodo hibrido adiciona duas camadas.
+\subsection{Modelos base e ajuste híbrido}
 
-No treinamento dos modelos base, os checkpoints sao gerados separadamente para cada combinacao ativo-arquitetura e avaliados diretamente na comparacao offline. O artigo nao realiza selecao \textit{ex post} entre varios checkpoints de uma mesma arquitetura: cada configuracao produz um unico checkpoint final salvo ao termino do treino. As configuracoes principais sao seq\_len igual a 15 para todas as arquiteturas, 140 epocas para LSTM e Autoencoder, 160 epocas para Transformer, taxa de aprendizado de $10^{-3}$ para LSTM e Autoencoder, taxa de $10^{-4}$ para Transformer e, no caso do Autoencoder, peso de reconstrucao igual a 0,5.
+Três modelos quantitativos foram treinados como baselines: LSTM, Autoencoder recorrente e Transformer. Todos recebem séries sincronizadas entre ativo e Brent e produzem previsões base de preço. Sobre essa previsão, o método híbrido adiciona duas camadas.
 
-A primeira camada e o ajuste por sequencia recuperada. Dado o conjunto de motivos correntes $M_t$, calculamos a similaridade coseno entre seus embeddings e todos os motivos da biblioteca historica filtrada. Mantemos os top-$k$ eventos acima do limiar $\tau = 0{,}70$ e calculamos a sequencia media ponderada
+No treinamento dos modelos base, os checkpoints são gerados separadamente para cada combinação ativo-arquitetura e avaliados diretamente na comparação offline. O artigo não realiza seleção \textit{ex post} entre vários checkpoints de uma mesma arquitetura: cada configuração produz um único checkpoint final salvo ao término do treino. As configurações principais são \texttt{seq\_len} igual a 15 para todas as arquiteturas, 140 épocas para LSTM e Autoencoder, 160 épocas para Transformer, taxa de aprendizado de $10^{-3}$ para LSTM e Autoencoder, taxa de $10^{-4}$ para Transformer e, no caso do Autoencoder, peso de reconstrução igual a 0,5.
+
+A primeira camada é o ajuste por sequência recuperada. Dado o conjunto de motivos correntes $M_t$, calculamos a similaridade cosseno entre seus embeddings e todos os motivos da biblioteca histórica filtrada. Esse passo define um pool curto de candidatos acima do limiar $\tau = 0{,}70$. Sobre esse pool, aplicamos um reranqueamento conservador que combina similaridade semântica, sinal lexical local e recência temporal. Os pesos são calibrados por arquitetura, mas mantêm predominância semântica: 0.90/0.07/0.03 para LSTM, 0.91/0.06/0.03 para Autoencoder e 0.84/0.12/0.04 para Transformer. Fora desse pool, nenhum candidato pode subir no ranking, de modo que o reranqueamento funciona apenas como desempate local. Após essa filtragem, mantemos os top-$k$ eventos e calculamos a sequência média ponderada
 \[
 \bar{q}_h = \frac{\sum_{i \in \mathcal{N}_t} s_i q_{i,h}}{\sum_{i \in \mathcal{N}_t} s_i},
 \]
-em que $s_i$ e a similaridade do item $i$ e $\mathcal{N}_t$ representa o conjunto de eventos recuperados. A previsao base $\hat{y}^{base}_{t+h}$ e ajustada por
+em que $s_i$ é a similaridade semântica original do item $i$ e $\mathcal{N}_t$ representa o conjunto de eventos recuperados. A previsão base $\hat{y}^{base}_{t+h}$ é ajustada por
 \[
 \hat{y}^{seq}_{t+h} = \hat{y}^{base}_{t+h}\left(1 + \alpha \cdot \bar{s} \cdot \frac{\bar{q}_h}{100}\right),
 \]
-em que $\bar{s}$ e a similaridade media dos eventos selecionados e $\alpha$ e um fator de escala escolhido por busca em grade no conjunto $\{0.1, 0.2, 0.3, 0.4, 0.5, 0.6\}$. Na avaliacao offline atual, a recuperacao usa top-$k=5$, limiar de similaridade $\tau = 0{,}70$ e aplica o ajuste sequencial no horizonte D0--D4, ainda que a biblioteca armazene sequencias ate D5.
+em que $\bar{s}$ é a similaridade média dos eventos selecionados e $\alpha$ é um fator de escala escolhido por busca em grade no conjunto $\{0.1, 0.2, 0.3, 0.4, 0.5, 0.6\}$. Na avaliação offline atual, a recuperação usa top-$k=5$, limiar de similaridade $\tau = 0{,}70$ e aplica o ajuste sequencial no horizonte D0--D4, ainda que a biblioteca armazene sequências até D5.
 
-A segunda camada e uma correcao residual em regime \textit{walk-forward}. Definimos o residual
+A segunda camada é uma correção residual em regime \textit{walk-forward}. Definimos o residual
 \[
 r_t = y_t - \hat{y}^{seq}_{t},
 \]
@@ -160,129 +161,129 @@ e treinamos iterativamente um modelo Ridge com atributos derivados apenas do pas
 \[
 x_t = [r_{t-1}, r_{t-2}, sim_t, event_t, hist_t],
 \]
-em que $sim_t$ representa a similaridade media do evento corrente, $event_t$ e um indicador binario de evento e $hist_t$ e a quantidade de eventos historicos usados na recuperacao. A previsao final e entao dada por
+em que $sim_t$ representa a similaridade média do evento corrente, $event_t$ é um indicador binário de evento e $hist_t$ é a quantidade de eventos históricos usados na recuperação. A previsão final é então dada por
 \[
 \hat{y}^{hyb}_{t} = \hat{y}^{seq}_{t} + g(x_t),
 \]
-com $g(\cdot)$ estimado apenas a partir da janela passada. Na implementacao atual, o ajuste residual usa janela de 15 observacoes. Essa formulacao nao deve ser interpretada como identificacao causal formal; ela representa um mecanismo de ajuste informado por eventos historicos comparaveis sob restricao temporal estrita.
+com $g(\cdot)$ estimado apenas a partir da janela passada. Na implementação atual, o ajuste residual usa janela de 15 observações. Essa formulação não deve ser interpretada como identificação causal formal; ela representa um mecanismo de ajuste informado por eventos históricos comparáveis sob restrição temporal estrita.
 
-\section{Avaliacao Experimental}
+\section{Avaliação Experimental}
 
 \subsection{Protocolo experimental}
 
-A avaliacao foi realizada de forma offline, em regime \textit{walk-forward}, sobre os tres ativos e as tres arquiteturas base. Para cada combinacao ativo-modelo, o pipeline gera quatro trilhas: previsao base, ajuste apenas por sequencia recuperada (\textit{SeqOnly}), correcao apenas residual (\textit{ResidualOnly}) e previsao hibrida completa. Ao todo, o experimento atual produz 12.159 previsoes fora da amostra, distribuidas uniformemente entre nove configuracoes.
+A avaliação foi realizada de forma offline, em regime \textit{walk-forward}, sobre os três ativos e as três arquiteturas base. Para cada combinação ativo-modelo, o pipeline gera quatro trilhas: previsão base, ajuste apenas por sequência recuperada (\textit{SeqOnly}), correção apenas residual (\textit{ResidualOnly}) e previsão híbrida completa. Ao todo, o experimento atual produz 12.159 previsões fora da amostra, distribuídas uniformemente entre nove configurações.
 
-As metricas principais sao RMSE e MAE, por refletirem erro de magnitude em escala original, que e o alvo central deste estudo de regressao. O RMSE recebe maior destaque por penalizar mais fortemente erros grandes em dias de choque, enquanto o MAE complementa a leitura com uma medida mais direta e menos sensivel a outliers. Como metricas complementares, tambem reportamos \textit{directional accuracy}, percentual de dias em que o hibrido supera o baseline e analises de robustez por ano. A \textit{directional accuracy} e mantida como medida auxiliar porque informa acerto de sinal, mas nao captura a magnitude do erro. Alem disso, o pipeline gera logs de decisao por ativo e arquitetura, registrando motivos, similaridade media, quantidade de eventos historicos utilizados e datas de referencia recuperadas. Esses artefatos reforcam a auditabilidade da camada informacional.
+As métricas principais são RMSE e MAE, por refletirem erro de magnitude em escala original, que é o alvo central deste estudo de regressão. O RMSE recebe maior destaque por penalizar mais fortemente erros grandes em dias de choque, enquanto o MAE complementa a leitura com uma medida mais direta e menos sensível a outliers. Como métricas complementares, também reportamos \textit{directional accuracy}, percentual de dias em que o híbrido supera o baseline, e análises de robustez por ano. A \textit{directional accuracy} é mantida como medida auxiliar porque informa acerto de sinal, mas não captura a magnitude do erro. Além disso, o pipeline gera logs de decisão por ativo e arquitetura, registrando motivos, similaridade média, quantidade de eventos históricos utilizados e datas de referência recuperadas. Esses artefatos reforçam a auditabilidade da camada informacional.
 
-Do ponto de vista metodologico, tres cuidados sao centrais no protocolo. Primeiro, a recuperacao historica usa apenas eventos anteriores a data prevista, o que reduz vazamento de informacao futura. Segundo, o ajuste residual e estimado em regime \textit{walk-forward}, com atributos calculados apenas a partir do passado observado. Terceiro, a avaliacao inclui uma ablacao explicita para separar o efeito do ajuste sequencial por similaridade do efeito da correcao residual.
+Do ponto de vista metodológico, três cuidados são centrais no protocolo. Primeiro, a recuperação histórica usa apenas eventos anteriores à data prevista, o que reduz vazamento de informação futura. Segundo, o ajuste residual é estimado em regime \textit{walk-forward}, com atributos calculados apenas a partir do passado observado. Terceiro, a avaliação inclui uma ablação explícita para separar o efeito do ajuste sequencial por similaridade do efeito da correção residual.
 
-Com esse desenho, a avaliacao permite discutir de forma integrada nao apenas a reducao agregada de erro frente aos baselines quantitativos, mas tambem o comportamento do metodo em dias com e sem evento, a recorrencia de sequencias semanticamente comparaveis, a robustez entre ativos, arquiteturas e recortes anuais, e os limites da abordagem em cenarios de historico pouco comparavel ou sob diferentes limiares de deteccao. Assim, os resultados a seguir sao interpretados menos como respostas isoladas a perguntas independentes e mais como evidencias complementares sobre desempenho, estabilidade, auditabilidade e sensibilidade do metodo proposto.
+Com esse desenho, a avaliação permite discutir de forma integrada não apenas a redução agregada de erro frente aos baselines quantitativos, mas também o comportamento do método em dias com e sem evento, a recorrência de sequências semanticamente comparáveis, a robustez entre ativos, arquiteturas e recortes anuais, e os limites da abordagem em cenários de histórico pouco comparável ou sob diferentes limiares de detecção. Assim, os resultados a seguir são interpretados menos como respostas isoladas a perguntas independentes e mais como evidências complementares sobre desempenho, estabilidade, auditabilidade e sensibilidade do método proposto.
 
 \subsection{Resultados principais}
 
-A Tabela~\ref{tab:rmse_principal} resume os resultados de RMSE por ativo e arquitetura. O ganho do metodo hibrido aparece em todos os nove cenarios avaliados. A melhora absoluta varia de 0.5167 a 1.4234 pontos de RMSE, com destaque para EXXO34 com Transformer.
+A Tabela~\ref{tab:rmse_principal} resume os resultados de RMSE por ativo e arquitetura. O ganho do método híbrido aparece em todos os nove cenários avaliados. Na configuração atual, que incorpora um reranqueamento conservador apenas como desempate dentro de um pool semântico curto, a melhora absoluta varia de 0.4982 a 1.4259 pontos de RMSE, com destaque para EXXO34 com Transformer.
 
 \begin{table}[H]
 \centering
 \small
-\caption{RMSE dos modelos base e hibridos por ativo e arquitetura}
+\caption{RMSE dos modelos base e híbridos por ativo e arquitetura}
 \label{tab:rmse_principal}
 \begin{tabular}{l l c c c}
 \toprule
-\textbf{Ativo} & \textbf{Modelo} & \textbf{RMSE Base} & \textbf{RMSE Hibrido} & \textbf{Ganho} \\
+\textbf{Ativo} & \textbf{Modelo} & \textbf{RMSE Base} & \textbf{RMSE Híbrido} & \textbf{Ganho} \\
 \midrule
-PETR4  & LSTM         & 0.9632 & 0.4465 & 0.5167 \\
-PRIO3  & LSTM         & 1.5592 & 0.8448 & 0.7144 \\
-EXXO34 & LSTM         & 2.0610 & 1.1628 & 0.8982 \\
-PETR4  & Autoencoder  & 1.0216 & 0.4487 & 0.5730 \\
-PRIO3  & Autoencoder  & 1.6077 & 0.8510 & 0.7567 \\
-EXXO34 & Autoencoder  & 2.1269 & 1.1725 & 0.9544 \\
-PETR4  & Transformer  & 1.0858 & 0.4624 & 0.6234 \\
-PRIO3  & Transformer  & 1.3836 & 0.8439 & 0.5397 \\
-EXXO34 & Transformer  & 2.8142 & 1.3908 & 1.4234 \\
+PETR4  & LSTM         & 0.9632 & 0.4650 & 0.4982 \\
+PRIO3  & LSTM         & 1.5592 & 0.8530 & 0.7062 \\
+EXXO34 & LSTM         & 2.0610 & 1.1624 & 0.8985 \\
+PETR4  & Autoencoder  & 1.0216 & 0.4678 & 0.5539 \\
+PRIO3  & Autoencoder  & 1.6077 & 0.8578 & 0.7499 \\
+EXXO34 & Autoencoder  & 2.1269 & 1.1744 & 0.9525 \\
+PETR4  & Transformer  & 1.0858 & 0.4752 & 0.6106 \\
+PRIO3  & Transformer  & 1.3836 & 0.8394 & 0.5442 \\
+EXXO34 & Transformer  & 2.8142 & 1.3883 & 1.4259 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Em media, o RMSE cai de 1.6248 para 0.8470, o que corresponde a uma reducao agregada de 47,9\%. O MAE medio cai de 1.2445 para 0.6187, uma reducao de 50,3\%. Alem disso, a \textit{directional accuracy} media sobe de 0.4791 para 0.5527, e o metodo hibrido supera o modelo base em 76,8\% dos dias avaliados. Em termos praticos, isso significa que o ganho nao fica restrito a um unico ativo nem a uma unica arquitetura. Ele aparece de forma consistente em LSTM, Autoencoder e Transformer, bem como em empresas mais maduras e mais novas dentro do recorte analisado.
+Em média, o RMSE cai de 1.6248 para 0.8537, o que corresponde a uma redução agregada de 47,5\%. O MAE médio cai de 1.2445 para 0.6253, uma redução de 49,8\%. Além disso, o método híbrido supera o modelo base em 76,2\% dos dias avaliados. Em termos práticos, isso significa que o ganho não fica restrito a um único ativo nem a uma única arquitetura. Ele aparece de forma consistente em LSTM, Autoencoder e Transformer, bem como em empresas mais maduras e mais novas dentro do recorte analisado.
 
-\subsection{Ablacao e interpretacao do ganho}
+\subsection{Ablação e interpretação do ganho}
 
-A Tabela~\ref{tab:ablacao} mostra que a camada \textit{SeqOnly}, isoladamente, gera melhora modesta, enquanto a maior parte do ganho vem da combinacao entre recuperacao semantica e correcao residual \textit{walk-forward}. Isso indica que o valor do metodo nao esta apenas em identificar eventos similares, mas em usar essa informacao como insumo para uma adaptacao residual sensivel ao contexto informacional.
+A Tabela~\ref{tab:ablacao} mostra que a camada \textit{SeqOnly}, isoladamente, gera melhora modesta, enquanto a maior parte do ganho vem da combinação entre recuperação semântica e correção residual \textit{walk-forward}. Isso indica que o valor do método não está apenas em identificar eventos similares, mas em usar essa informação como insumo para uma adaptação residual sensível ao contexto informacional.
 
 \begin{table}[H]
 \centering
-\caption{Ablacao agregada por media de RMSE}
+\caption{Ablação agregada por média de RMSE}
 \label{tab:ablacao}
 \begin{tabular}{l c}
 \toprule
-\textbf{Configuracao} & \textbf{RMSE medio} \\
+\textbf{Configuração} & \textbf{RMSE médio} \\
 \midrule
 Modelo base      & 1.6248 \\
-SeqOnly          & 1.5789 \\
+SeqOnly          & 1.5768 \\
 ResidualOnly     & 0.8881 \\
-Hibrido completo & 0.8470 \\
+Híbrido completo & 0.8537 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Os numeros da ablacao mostram tres mensagens importantes. Primeiro, ha algum valor na recuperacao semantica pura, mas ela sozinha reduz pouco o erro medio (2,8\%). Segundo, a correcao residual orientada por informacao de evento e o principal motor de ganho, reduzindo o RMSE medio em 45,3\% frente ao baseline. Terceiro, a combinacao das duas etapas ainda acrescenta melhora adicional, levando o ganho agregado a 47,9\%.
+Os números da ablação mostram três mensagens importantes. Primeiro, há algum valor na recuperação semântica pura, mas ela sozinha reduz pouco o erro médio (3,0\%). Segundo, a correção residual orientada por informação de evento é o principal motor de ganho, reduzindo o RMSE médio em 45,3\% frente ao baseline. Terceiro, a combinação das duas etapas ainda acrescenta melhora adicional, levando o ganho agregado a 47,5\%.
 
 \subsection{Resultados por regime e robustez temporal}
 
-Ao separar as observacoes em dias marcados pela biblioteca de eventos e dias sem marcacao, o hibrido melhora em ambos os casos. Em termos medios de MAE, a reducao e de 48,4\% nos dias com evento e de 54,6\% nos dias sem evento. Esse resultado sugere que a camada residual aprende regularidades uteis mesmo fora dos dias explicitamente marcados. Ainda assim, o metodo continua dependente de uma base semantica coerente para capturar os choques mais informacionais.
+Ao separar as observações em dias marcados pela biblioteca de eventos e dias sem marcação, o híbrido melhora em ambos os casos. Em termos médios de MAE, a redução é de 48,1\% nos dias com evento e de 53,4\% nos dias sem evento. Esse resultado sugere que a camada residual aprende regularidades úteis mesmo fora dos dias explicitamente marcados. Ainda assim, o método continua dependente de uma base semântica coerente para capturar os choques mais informacionais.
 
-As analises auxiliares tambem indicam robustez temporal relevante: 60 de 63 subgrupos ano-ativo-modelo melhoram em relacao ao baseline. As tres excecoes aparecem em janelas iniciais de 2020 com apenas tres observacoes. Esse comportamento deve ser interpretado a luz da heterogeneidade da amostra. O recorte inclui empresas mais maduras e series mais longas, como Petrobras, e empresas relativamente mais novas no mercado observado, o que reduz a quantidade de observacoes disponiveis em janelas muito antigas para alguns ativos. Por isso, os poucos casos sem ganho concentram-se em faixas temporais muito curtas e nao indicam degradacao sistematica do metodo.
+As análises auxiliares também indicam robustez temporal relevante: 60 de 63 subgrupos ano-ativo-modelo melhoram em relação ao baseline. As três exceções aparecem em janelas iniciais de 2020 com apenas três observações. Esse comportamento deve ser interpretado à luz da heterogeneidade da amostra. O recorte inclui empresas mais maduras e séries mais longas, como Petrobras, e empresas relativamente mais novas no mercado observado, o que reduz a quantidade de observações disponíveis em janelas muito antigas para alguns ativos. Por isso, os poucos casos sem ganho concentram-se em faixas temporais muito curtas e não indicam degradação sistemática do método.
 
-\subsection{Discussao}
+\subsection{Discussão}
 
-Em conjunto, os resultados sugerem que a biblioteca de eventos recuperados funciona como um mecanismo de memoria externa util para previsao numerica. Seu valor pratico, contudo, depende de duas condicoes: uma base historica minimamente rica e um procedimento de recuperacao sob restricao temporal. Isso ajuda a explicar por que a combinacao entre recuperacao e residual supera tanto o baseline puro quanto o ajuste semantico isolado. O metodo tambem preserva uma propriedade importante para uso academico: cada ajuste pode ser rastreado a eventos historicos concretos, o que facilita analise qualitativa, inspecao de falhas e discussao economica dos resultados.
+Em conjunto, os resultados sugerem que a biblioteca de eventos recuperados funciona como um mecanismo de memória externa útil para previsão numérica. Seu valor prático, contudo, depende de duas condições: uma base histórica minimamente rica e um procedimento de recuperação sob restrição temporal. Isso ajuda a explicar por que a combinação entre recuperação e residual supera tanto o baseline puro quanto o ajuste semântico isolado. O método também preserva uma propriedade importante para uso acadêmico: cada ajuste pode ser rastreado a eventos históricos concretos, o que facilita análise qualitativa, inspeção de falhas e discussão econômica dos resultados.
 
-Como complemento interpretativo, a Tabela~\ref{tab:topicos_impacto} resume os cinco assuntos com maior alteracao absoluta de preco no horizonte futuro entre os clusters com pelo menos cinco eventos. O criterio usado foi a soma absoluta da trajetoria media posterior no horizonte D1--D5, preservando o sinal medio observado. Assim, a tabela nao mede a polaridade semantica intrinseca do assunto, mas sim o comportamento medio dos precos apos eventos daquele tipo.
+Como complemento interpretativo, a Tabela~\ref{tab:topicos_impacto} resume os cinco assuntos com maior alteração absoluta de preço no horizonte futuro entre os clusters com pelo menos cinco eventos. O critério usado foi a soma absoluta da trajetória média posterior no horizonte D1--D5, preservando o sinal médio observado. Assim, a tabela não mede a polaridade semântica intrínseca do assunto, mas sim o comportamento médio dos preços após eventos daquele tipo.
 
 \begin{table}[H]
 \centering
 \small
-\caption{Assuntos com maior alteracao absoluta de preco no horizonte futuro}
+\caption{Assuntos com maior alteração absoluta de preço no horizonte futuro}
 \label{tab:topicos_impacto}
 \begin{tabular}{l c c c}
 \toprule
 \textbf{Assunto representativo} & \textbf{Ativo} & \textbf{$n$} & \textbf{Impacto D1--D5} \\
 \midrule
-Preocupacoes fiscais e politicas no Brasil sobre o ativo & PETR4 & 9 & +6.2527 \\
-Reducao dos riscos geopoliticos no Oriente Medio & BRENT & 8 & -5.3361 \\
-Tensoes geopoliticas entre Russia e Ucrania & BRENT & 14 & -5.1211 \\
-Sancoes e restricoes ao petroleo russo & BRENT & 12 & -4.3527 \\
-Intervencao estatal e politica na gestao da empresa & PETR4 & 7 & -4.0636 \\
+Preocupações fiscais e políticas no Brasil sobre o ativo & PETR4 & 9 & +6.2527 \\
+Redução dos riscos geopolíticos no Oriente Médio & BRENT & 8 & -5.3361 \\
+Tensões geopolíticas entre Rússia e Ucrânia & BRENT & 14 & -5.1211 \\
+Sanções e restrições ao petróleo russo & BRENT & 12 & -4.3527 \\
+Intervenção estatal e política na gestão da empresa & PETR4 & 7 & -4.0636 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\section{Ameacas a Validade}
+\section{Ameaças à Validade}
 
 \subsection{Validade interna}
 
-A principal ameaca a validade interna decorre da dependencia de servicos externos para estruturacao de noticias e geracao de embeddings. Mesmo com prompts controlados, JSON estruturado e \textit{fallback} de busca, ainda existe variacao induzida pelo modelo de linguagem e pela disponibilidade de conteudo recuperado. Alem disso, a abordagem nao realiza identificacao causal formal; portanto, a relacao entre noticia, evento recuperado e ajuste preditivo deve ser interpretada como associacao informacional util, e nao como prova de causalidade economica.
+A principal ameaça à validade interna decorre da dependência de serviços externos para estruturação de notícias e geração de embeddings. Mesmo com prompts controlados, JSON estruturado e \textit{fallback} de busca, ainda existe variação induzida pelo modelo de linguagem e pela disponibilidade de conteúdo recuperado. Além disso, a abordagem não realiza identificação causal formal; portanto, a relação entre notícia, evento recuperado e ajuste preditivo deve ser interpretada como associação informacional útil, e não como prova de causalidade econômica.
 
 \subsection{Validade de construto}
 
-O construto ``evento relevante'' depende de uma heuristica baseada em limiar de retorno diario. Embora a abordagem inclua analise de sensibilidade para 1,5\%, 2,0\% e 2,5\%, ainda ha risco de que alguns movimentos importantes fiquem fora da base ou de que certos dias entrem como eventos sem corresponder a um choque informacional claro. De forma semelhante, os clusters semanticos devem ser entendidos como apoio exploratorio e nao como validacao definitiva de categorias economicas.
+O construto ``evento relevante'' depende de uma heurística baseada em limiar de retorno diário. Embora a abordagem inclua análise de sensibilidade para 1,5\%, 2,0\% e 2,5\%, ainda há risco de que alguns movimentos importantes fiquem fora da base ou de que certos dias entrem como eventos sem corresponder a um choque informacional claro. De forma semelhante, os clusters semânticos devem ser entendidos como apoio exploratório e não como validação definitiva de categorias econômicas.
 
 \subsection{Validade externa}
 
-O escopo empirico esta restrito ao setor de oleo e gas e a tres ativos especificos, todos sincronizados com o Brent. Esse desenho foi escolhido por favorecer interpretacao economica e recorrencia de choques informacionais, mas limita a generalizacao imediata para outros setores, mercados ou frequencias temporais. A extensao da abordagem para bancos, varejo, tecnologia ou dados intradiarios ainda precisa ser demonstrada empiricamente.
+O escopo empírico está restrito ao setor de óleo e gás e a três ativos específicos, todos sincronizados com o Brent. Esse desenho foi escolhido por favorecer interpretação econômica e recorrência de choques informacionais, mas limita a generalização imediata para outros setores, mercados ou frequências temporais. A extensão da abordagem para bancos, varejo, tecnologia ou dados intradiários ainda precisa ser demonstrada empiricamente.
 
-\subsection{Validade estatistica e de reproducao}
+\subsection{Validade estatística e de reprodução}
 
-Embora o numero total de previsoes fora da amostra seja expressivo, alguns recortes anuais iniciais possuem poucas observacoes por causa da maturidade diferente entre os ativos analisados. Empresas mais maduras oferecem janelas historicas mais densas, enquanto ativos relativamente mais novos no recorte observado geram menos pontos em anos iniciais. Essa assimetria afeta sobretudo os recortes temporais mais curtos, justamente onde se concentram os poucos casos sem ganho. Alem disso, os artefatos experimentais ja incluem logs, tabelas auxiliares e testes de reproducibilidade, mas ainda nao contemplam uma bateria estatistica mais ampla, como testes formais de significancia, intervalos de confianca por janela ou validacao cruzada temporal em multiplos cortes.
+Embora o número total de previsões fora da amostra seja expressivo, alguns recortes anuais iniciais possuem poucas observações por causa da maturidade diferente entre os ativos analisados. Empresas mais maduras oferecem janelas históricas mais densas, enquanto ativos relativamente mais novos no recorte observado geram menos pontos em anos iniciais. Essa assimetria afeta sobretudo os recortes temporais mais curtos, justamente onde se concentram os poucos casos sem ganho. Além disso, os artefatos experimentais já incluem logs, tabelas auxiliares e testes de reprodutibilidade, mas ainda não contemplam uma bateria estatística mais ampla, como testes formais de significância, intervalos de confiança por janela ou validação cruzada temporal em múltiplos cortes.
 
-\section{Conclusao}
+\section{Conclusão}
 
-Este trabalho apresentou um metodo de previsao hibrida para series temporais financeiras no qual noticias sao convertidas em eventos estruturados e reutilizadas por meio de recuperacao semantica de episodios historicos comparaveis. A contribuicao central do artigo esta em combinar uma biblioteca historica de eventos com corte temporal estrito, um ajuste sequencial ponderado por similaridade e uma correcao residual \textit{walk-forward} sobre baselines quantitativos padrao.
+Este trabalho apresentou um método de previsão híbrida para séries temporais financeiras no qual notícias são convertidas em eventos estruturados e reutilizadas por meio de recuperação semântica de episódios históricos comparáveis. A contribuição central do artigo está em combinar uma biblioteca histórica de eventos com corte temporal estrito, um ajuste sequencial ponderado por similaridade e uma correção residual \textit{walk-forward} sobre baselines quantitativos padrão.
 
-As evidencias quantitativas mostram que essa combinacao melhora de forma consistente os tres baselines avaliados. O RMSE medio cai 47,9\%, o MAE medio cai 50,3\%, a \textit{directional accuracy} aumenta e o metodo supera o baseline em mais de tres quartos dos dias avaliados. A ablacao reforca que o ganho nao vem de um unico componente isolado, mas da interacao entre recuperacao semantica e adaptacao residual. Em paralelo, a analise exploratoria dos clusters indica quais assuntos aparecem associados a trajetorias medias posteriores de maior magnitude, preservando uma camada adicional de auditabilidade.
+As evidências quantitativas mostram que essa combinação melhora de forma consistente os três baselines avaliados. O RMSE médio cai 47,5\%, o MAE médio cai 49,8\% e o método supera o baseline em mais de três quartos dos dias avaliados. A ablação reforça que o ganho não vem de um único componente isolado, mas da interação entre recuperação semântica e adaptação residual. Em paralelo, a análise exploratória dos clusters indica quais assuntos aparecem associados a trajetórias médias posteriores de maior magnitude, preservando uma camada adicional de auditabilidade.
 
-Como proximos passos, destacam-se quatro direcoes. A primeira e reconstruir a base semantica por janelas temporais para reduzir ainda mais o risco de contaminacao historica. A segunda e ampliar a avaliacao para outros setores e mercados. A terceira e incorporar testes estatisticos mais fortes sobre os ganhos observados. A quarta e congelar artefatos nao deterministas para reproducao integral do experimento.
+Como próximos passos, destacam-se quatro direções. A primeira é reconstruir a base semântica por janelas temporais para reduzir ainda mais o risco de contaminação histórica. A segunda é ampliar a avaliação para outros setores e mercados. A terceira é incorporar testes estatísticos mais fortes sobre os ganhos observados. A quarta é congelar artefatos não deterministas para reprodução integral do experimento.
 
 \bibliographystyle{apalike}
 \bibliography{sbc-template}

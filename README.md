@@ -490,25 +490,27 @@ A tabela consolidada de comparacao dos modelos ja existe em [data/resultado_comp
 
 Resumo atual:
 
-- RMSE medio dos modelos base: `1.5218`
-- RMSE medio dos modelos hibridos: `0.8465`
-- ganho medio absoluto: `0.6754`
+- RMSE medio dos modelos base: `1.6248`
+- RMSE medio dos modelos hibridos: `0.8537`
+- ganho medio absoluto: `0.7711`
+
+Esta versao do repositorio inclui uma variante conservadora de reranqueamento no nucleo do pipeline. Ela atua apenas como desempate dentro de um pool semantico curto e, na configuracao atual, preserva o ganho do hibrido em todos os nove cenarios avaliados.
 
 Detalhe por ativo e arquitetura:
 
 | Ativo | Modelo | RMSE Modelo | RMSE Hibrido | Ganho |
 |---|---|---:|---:|---:|
-| PETR4 | LSTM | 0.9370 | 0.4406 | 0.4965 |
-| PRIO3 | LSTM | 1.4711 | 0.7920 | 0.6791 |
-| EXXO34 | LSTM | 2.0337 | 1.1773 | 0.8564 |
-| PETR4 | AE | 0.9597 | 0.4376 | 0.5222 |
-| PRIO3 | AE | 1.5244 | 0.7980 | 0.7265 |
-| EXXO34 | AE | 2.0053 | 1.1882 | 0.8170 |
-| PETR4 | Transformer | 1.0942 | 0.6056 | 0.4886 |
-| PRIO3 | Transformer | 1.4999 | 0.9134 | 0.5865 |
-| EXXO34 | Transformer | 2.1712 | 1.2657 | 0.9055 |
+| PETR4 | LSTM | 0.9632 | 0.4650 | 0.4982 |
+| PRIO3 | LSTM | 1.5592 | 0.8530 | 0.7062 |
+| EXXO34 | LSTM | 2.0610 | 1.1624 | 0.8985 |
+| PETR4 | AE | 1.0216 | 0.4678 | 0.5539 |
+| PRIO3 | AE | 1.6077 | 0.8578 | 0.7499 |
+| EXXO34 | AE | 2.1269 | 1.1744 | 0.9525 |
+| PETR4 | Transformer | 1.0858 | 0.4752 | 0.6106 |
+| PRIO3 | Transformer | 1.3836 | 0.8394 | 0.5442 |
+| EXXO34 | Transformer | 2.8142 | 1.3883 | 1.4259 |
 
-Esses numeros sustentam a afirmacao central de que, no recorte atualmente avaliado, o componente hibrido melhora consistentemente o desempenho em todos os ativos e arquiteturas testados.
+Esses numeros sustentam a afirmacao central de que, no recorte atualmente avaliado, o componente hibrido melhora consistentemente o desempenho em todos os ativos e arquiteturas testados. Em dias marcados como evento, a reducao media de MAE permanece em `48.1%`; em dias sem evento, ela fica em `53.4%`.
 
 ## Testes
 

@@ -1,0 +1,195 @@
+\begin{thebibliography}{}
+
+\bibitem[Araci, 2019]{Araci:2019}
+Araci, D. (2019).
+\newblock Finbert: Financial sentiment analysis with pre-trained language
+  models.
+\newblock {\em IEEE Access}, 7:155448--155458.
+
+\bibitem[Banushev, 2019]{Banushev:2019}
+Banushev, B. (2019).
+\newblock stockpredictionai: Using the latest advancements in ai to predict
+  stock market movements.
+\newblock \url{https://github.com/borisbanushev/stockpredictionai}.
+\newblock GitHub repository. Accessed: 2026-03-27.
+
+\bibitem[Bao et~al., 2017]{Bao:2017}
+Bao, W., Yue, J., and Rao, Y. (2017).
+\newblock Adeeplearning framework for financial time series using stacked
+  autoencoders and long short term memory.
+\newblock {\em PLOS ONE}, 12(7):e0180944.
+
+\bibitem[Barberis et~al., 1998]{Barberis:1998}
+Barberis, N., Shleifer, A., and Vishny, R. (1998).
+\newblock A model of investor sentiment.
+\newblock {\em Journal of Finance}, 53(1):307--343.
+
+\bibitem[Cheng et~al., 2026]{Cheng:2026FinRerank}
+Cheng, Z., Lai, L., Liu, Y., Cheng, K., and Qi, X. (2026).
+\newblock Enhancing financial report question-answering: A retrieval-augmented
+  generation system with reranking analysis.
+\newblock {\em arXiv preprint arXiv:2603.16877}.
+
+\bibitem[Cutler et~al., 1989]{Cutler:1989}
+Cutler, D.~M., Poterba, J.~M., and Summers, L.~H. (1989).
+\newblock What moves stock prices?
+\newblock {\em Journal of Portfolio Management}, 15(3):4--12.
+
+\bibitem[Devlin et~al., 2019]{Devlin:2019}
+Devlin, J., Chang, M.-W., Lee, K., and Toutanova, K. (2019).
+\newblock Bert: Pre-training of deep bidirectional transformers for language
+  understanding.
+\newblock {\em Proceedings of the North American Chapter of the Association for
+  Computational Linguistics}, 1:4171--4186.
+
+\bibitem[Ding et~al., 2014]{Ding:2014}
+Ding, X., Zhang, Y., Liu, T., and Duan, J. (2014).
+\newblock Using structured events to predict stock price movement: An empirical
+  investigation.
+\newblock In {\em Proceedings of the 2014 Conference on Empirical Methods in
+  Natural Language Processing (EMNLP)}, pages 1415--1425.
+
+\bibitem[Ding et~al., 2015]{Ding:2015}
+Ding, X., Zhang, Y., Liu, T., and Duan, J. (2015).
+\newblock Deep learning for event-driven stock prediction.
+\newblock In {\em Proceedings of the Twenty-Fourth International Joint
+  Conference on Artificial Intelligence (IJCAI)}, pages 2327--2333.
+
+\bibitem[Ding et~al., 2016]{Ding:2016}
+Ding, X., Zhang, Y., Liu, T., and Duan, J. (2016).
+\newblock Knowledge-driven event embedding for stock prediction.
+\newblock In {\em Proceedings of COLING 2016, the 26th International Conference
+  on Computational Linguistics: Technical Papers}, pages 2133--2142.
+
+\bibitem[Fama, 1970]{Fama:1970}
+Fama, E.~F. (1970).
+\newblock Efficient capital markets: A review of theory and empirical work.
+\newblock {\em Journal of Finance}, 25(2):383--417.
+
+\bibitem[Fischer and Krauss, 2018]{Fischer:2018}
+Fischer, T. and Krauss, C. (2018).
+\newblock Deep learning with long short-term memory networks for financial
+  market predictions.
+\newblock {\em European Journal of Operational Research}, 270(2):654--669.
+
+\bibitem[Hong and Stein, 1999]{Hong:1999}
+Hong, H. and Stein, J.~C. (1999).
+\newblock A unified theory of underreaction, momentum trading, and overreaction
+  in asset markets.
+\newblock {\em Journal of Finance}, 54(6):2143--2184.
+
+\bibitem[Khattab and Zaharia, 2020]{Khattab:2020}
+Khattab, O. and Zaharia, M. (2020).
+\newblock Colbert: Efficient and effective passage search via contextualized
+  late interaction over bert.
+\newblock In {\em Proceedings of the 43rd International ACM SIGIR Conference on
+  Research and Development in Information Retrieval}, pages 39--48.
+
+\bibitem[Li et~al., 2025]{Li:2025FinGEAR}
+Li, Y., Wang, M., de~Carvalho, M., Sabanis, S., and Ma, T. (2025).
+\newblock Fingear: Financial mapping-guided enhanced answer retrieval.
+\newblock In {\em Findings of the Association for Computational Linguistics:
+  EMNLP 2025}, pages 7239--7255.
+
+\bibitem[Li, 2025]{Li:2025RAF}
+Li, Z. (2025).
+\newblock Retrieval-augmented forecasting with tabular time series data.
+\newblock In {\em Proceedings of the 4th Table Representation Learning
+  Workshop}, pages 192--199.
+
+\bibitem[Lim et~al., 2021]{Lim:2021}
+Lim, B., Ar{\i}k, S.~O., Loeff, N., and Pfister, T. (2021).
+\newblock Temporal fusion transformers for interpretable multi-horizon time
+  series forecasting.
+\newblock {\em International Journal of Forecasting}, 37(4):1748--1764.
+
+\bibitem[Loughran and McDonald, 2011]{Loughran:2011}
+Loughran, T. and McDonald, B. (2011).
+\newblock When is a liability not a liability? textual analysis, dictionaries,
+  and 10-ks.
+\newblock {\em Journal of Finance}, 66(1):35--65.
+
+\bibitem[Luo et~al., 2023]{Luo:2023}
+Luo, D., Liao, W., Lin, Z., and Song, D. (2023).
+\newblock Causality-guided multi-memory interaction network for multivariate
+  stock price movement prediction.
+\newblock In {\em Proceedings of the 61st Annual Meeting of the Association for
+  Computational Linguistics}.
+
+\bibitem[Mikolov et~al., 2013]{Mikolov:2013}
+Mikolov, T., Chen, K., Corrado, G., and Dean, J. (2013).
+\newblock Efficient estimation of word representations in vector space.
+\newblock In {\em Proceedings of the International Conference on Learning
+  Representations}.
+
+\bibitem[Mitra and Mitra, 2011]{Mitra:2011}
+Mitra, G. and Mitra, L. (2011).
+\newblock The impact of news sentiment on stock returns.
+\newblock {\em Quantitative Finance}, 11(7):1037--1061.
+
+\bibitem[Reimers and Gurevych, 2019]{Reimers:2019}
+Reimers, N. and Gurevych, I. (2019).
+\newblock Sentence-bert: Sentence embeddings using siamese bert-networks.
+\newblock {\em Proceedings of the Conference on Empirical Methods in Natural
+  Language Processing}, pages 3982--3992.
+
+\bibitem[Sawhney et~al., 2020]{Sawhney:2020}
+Sawhney, R., Agarwal, S., Wadhwa, A., and Shah, R.~R. (2020).
+\newblock Deep attentive learning for stock movement prediction from social
+  media text and company correlations.
+\newblock In {\em Proceedings of the 2020 Conference on Empirical Methods in
+  Natural Language Processing (EMNLP)}, pages 8415--8426.
+
+\bibitem[Tetlock, 2007]{Tetlock:2007}
+Tetlock, P.~C. (2007).
+\newblock Giving content to investor sentiment: The role of media in the stock
+  market.
+\newblock {\em Journal of Finance}, 62(3):1139--1168.
+
+\bibitem[Tetlock et~al., 2008]{Tetlock:2008}
+Tetlock, P.~C., Saar-Tsechansky, M., and Macskassy, S. (2008).
+\newblock More than words: Quantifying language to measure firms' fundamentals.
+\newblock {\em Journal of Finance}, 63(3):1437--1467.
+
+\bibitem[Vaswani et~al., 2017]{Vaswani:2017}
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.~N.,
+  Kaiser, L., and Polosukhin, I. (2017).
+\newblock Attention is all you need.
+\newblock In {\em Advances in Neural Information Processing Systems},
+  volume~30, pages 5998--6008.
+
+\bibitem[Wang et~al., 2025]{Wang:2025StockMem}
+Wang, H., Xiao, W., Han, S., and Huang, H. (2025).
+\newblock Stockmem: An event-reflection memory framework for stock forecasting.
+\newblock {\em arXiv preprint arXiv:2512.02720}.
+
+\bibitem[Wu et~al., 2021]{Wu:2021}
+Wu, H., Xu, J., Wang, J., and Long, M. (2021).
+\newblock Informer: Beyond efficient transformer for long sequence time-series
+  forecasting.
+\newblock In {\em Proceedings of the AAAI Conference on Artificial
+  Intelligence}, volume~35, pages 11106--11115.
+
+\bibitem[Xiao et~al., 2025]{Xiao:2025FinSrag}
+Xiao, M., Jiang, Z., Qian, L., Chen, Z., He, Y., Xu, Y., Jiang, Y., Li, D.,
+  Weng, R.-L., Peng, M., Huang, J., Ananiadou, S., and Xie, Q. (2025).
+\newblock Retrieval-augmented large language models for financial time series
+  forecasting.
+\newblock {\em arXiv preprint arXiv:2502.05878}.
+
+\bibitem[Xu and Cohen, 2018]{Xu:2018}
+Xu, Y. and Cohen, S.~B. (2018).
+\newblock Stock movement prediction from tweets and historical prices.
+\newblock In {\em Proceedings of the 56th Annual Meeting of the Association for
+  Computational Linguistics}, pages 1970--1979.
+
+\bibitem[Zhao et~al., 2024]{Zhao:2024}
+Zhao, Y., Singh, P., Bhathena, H., Ramos, B., Joshi, A., Gadiyaram, S., and
+  Sharma, S. (2024).
+\newblock Optimizing llm based retrieval augmented generation pipelines in the
+  financial domain.
+\newblock In {\em Proceedings of the 2024 Conference of the North American
+  Chapter of the Association for Computational Linguistics: Human Language
+  Technologies (Volume 6: Industry Track)}, pages 279--294.
+
+\end{thebibliography}

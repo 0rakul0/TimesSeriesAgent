@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
+    "streamlit>=1.44.1",
     "statsmodels>=0.14.5",
     "stumpy>=1.13.0",
     "tavily-python>=0.7.12",
